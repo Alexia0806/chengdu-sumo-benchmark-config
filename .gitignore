@@ -1,0 +1,23 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.pycache-local/
+
+# Local outputs and large/generated experiment artifacts.
+runs/
+artifacts/
+*.log
+*.jsonl
+*.zip
+*.tar.gz
+
+# Keep this repository focused on the Chengdu scenario bundle.
+TSC_CYCLE_v1/
+TSC_CYCLE_v1_review/
+TSC_CYCLE_v4_reproduction/
+qwen35_9b_phase18_q4_manual_completions_temp01_40min/

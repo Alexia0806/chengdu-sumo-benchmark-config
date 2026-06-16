@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+    <vType id="car" maxSpeed="15" length="5"/>
+    <flow id="rush_hour1" type="car" begin="0" period="0.01" departLane="best" departPos="random" color="yellow">
+        <route edges="611514024#0 28621528 476507479#3-AddedOnRampEdge 476507479#3 589463599#0 589463599#1-AddedOnRampEdge -265833077#2 -265833077#1 -265833077#0 -28621533#3 -28621533#2 -28621533#2.23 -28621533#1 -28621533#0 37132266#0 37132266#1 37132266#2 37132266#4 184446506#0 184446506#5 -475633267#6 -475633267#3 441579299#7"/>
+    </flow>
+    <flow id="rush_hour2" type="car" begin="0" period="0.01" departLane="best" departPos="random" color="yellow">
+        <route edges="611514024#0 28621528 476507479#3-AddedOnRampEdge 476507479#3 589463599#0 589463599#1-AddedOnRampEdge -265833077#2 -265833077#1 -265833077#0 -28621533#3 -28621533#2 -28621533#2.23 -28621533#1 -28621533#0 37132266#0 37132266#1 37132266#2 37132266#4 184446506#0 184446506#5 -475633267#6 -475633267#3 441579299#7"/>
+    </flow>
+</routes>
