@@ -16,6 +16,7 @@ import json
 import math
 import os
 import signal
+import shutil
 import socket
 import subprocess
 import sys
@@ -66,6 +67,21 @@ def percentile(values: list[float], p: float) -> float | None:
     if lo == hi:
         return ordered[int(rank)]
     return ordered[lo] + (ordered[hi] - ordered[lo]) * (rank - lo)
+
+
+def normalized_queue_thresholds(args: argparse.Namespace) -> list[float]:
+    raw_thresholds = getattr(args, "queue_thresholds", None) or [getattr(args, "queue_threshold", 10.0)]
+    thresholds = sorted({float(value) for value in raw_thresholds})
+    if not thresholds:
+        raise ValueError("at least one queue threshold is required")
+    if any(value < 0 for value in thresholds):
+        raise ValueError("queue thresholds must be non-negative")
+    return thresholds
+
+
+def metric_key_float(value: float) -> str:
+    text = f"{float(value):g}"
+    return text.replace("-", "m").replace(".", "p")
 
 
 GITHUB_SCENARIOS: dict[str, dict[str, Any]] = {
@@ -278,6 +294,7 @@ def runtime_sumocfg(sumocfg: Path, args: argparse.Namespace) -> Path:
     Older SUMO builds reject some newer config options.  When that happens,
     create a sibling compat copy with unsupported options removed.
     """
+    sumocfg = demand_scaled_sumocfg(sumocfg, args)
     unsupported_tags = []
     if not _sumo_supports_option(args, "time-to-teleport.bidi"):
         unsupported_tags.append("time-to-teleport.bidi")
@@ -307,6 +324,224 @@ def runtime_sumocfg(sumocfg: Path, args: argparse.Namespace) -> Path:
         },
     )
     return compat_path
+
+
+def demand_scaled_sumocfg(sumocfg: Path, args: argparse.Namespace) -> Path:
+    """Create a run-local SUMO config with uniformly scaled route demand."""
+    scale = float(getattr(args, "demand_scale", 1.0) or 1.0)
+    target_peak_enabled = bool(args.target_peak_tl_id and args.target_peak_vph_per_route > 0)
+    if abs(scale - 1.0) < 1e-9 and not target_peak_enabled:
+        return sumocfg
+    if scale <= 0:
+        raise ValueError("--demand-scale must be positive")
+
+    output_dir = getattr(args, "output_dir", None)
+    if output_dir is None:
+        raise ValueError("--demand-scale requires an explicit --output-dir")
+    runtime_dir = Path(output_dir) / "runtime_sumo" / f"demand_x{scale:g}" / sumocfg.parent.name
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    tree = ET.parse(sumocfg)
+    root = tree.getroot()
+    target_peak_file = write_target_peak_route_file(sumocfg, root, runtime_dir, args, scale)
+    route_values: list[str] = []
+    for el in root.iter():
+        if el.tag.split("}")[-1] != "route-files":
+            continue
+        value = el.attrib.get("value") or (el.text.strip() if el.text else "")
+        if value:
+            route_values.extend(raw.strip() for raw in value.split(",") if raw.strip())
+            scaled_values: list[str] = []
+            for raw in value.split(","):
+                raw = raw.strip()
+                if not raw:
+                    continue
+                src = Path(raw).expanduser()
+                if not src.is_absolute():
+                    src = sumocfg.parent / src
+                dst = runtime_dir / f"{src.stem}.demand_x{scale:g}{src.suffix}"
+                scale_route_file(src, dst, scale)
+                scaled_values.append(dst.name)
+            if target_peak_file is not None:
+                scaled_values.append(target_peak_file.name)
+            el.set("value", ",".join(scaled_values))
+
+    if not route_values and target_peak_file is None:
+        return sumocfg
+
+    for el in root.iter():
+        tag = el.tag.split("}")[-1]
+        value = el.attrib.get("value")
+        if not value:
+            continue
+        if tag in {"net-file", "additional-files", "gui-settings-file"}:
+            resolved = Path(value).expanduser()
+            if not resolved.is_absolute():
+                resolved = sumocfg.parent / resolved
+            target = runtime_dir / resolved.name
+            if resolved.exists() and not target.exists():
+                if resolved.is_dir():
+                    shutil.copytree(resolved, target)
+                else:
+                    shutil.copy2(resolved, target)
+            el.set("value", target.name)
+
+    scaled_sumocfg = runtime_dir / f"{sumocfg.stem}.demand_x{scale:g}{sumocfg.suffix}"
+    tree.write(scaled_sumocfg, encoding="utf-8", xml_declaration=True)
+    print_benchmark_log(
+        "demand_scaled_sumocfg_written",
+        {
+            "source_sumocfg": str(sumocfg),
+            "scaled_sumocfg": str(scaled_sumocfg),
+            "demand_scale": scale,
+            "route_files": route_values,
+            "target_peak_route_file": str(target_peak_file) if target_peak_file else None,
+        },
+    )
+    return scaled_sumocfg
+
+
+def write_target_peak_route_file(
+    sumocfg: Path,
+    root: ET.Element,
+    runtime_dir: Path,
+    args: argparse.Namespace,
+    scale: float,
+) -> Path | None:
+    tl_ids = list(dict.fromkeys(args.target_peak_tl_id or []))
+    if not tl_ids or args.target_peak_vph_per_route <= 0:
+        return None
+
+    net_value = None
+    for el in root.iter():
+        if el.tag.split("}")[-1] == "net-file":
+            net_value = el.attrib.get("value") or (el.text.strip() if el.text else None)
+            break
+    if not net_value:
+        raise ValueError("target peak requires a net-file in sumocfg")
+    net_path = Path(net_value).expanduser()
+    if not net_path.is_absolute():
+        net_path = sumocfg.parent / net_path
+
+    net_root = ET.parse(net_path).getroot()
+    by_tl: dict[str, list[tuple[str, str]]] = {tl_id: [] for tl_id in tl_ids}
+    seen: set[tuple[str, str, str]] = set()
+    for conn in net_root.iter("connection"):
+        tl_id = conn.attrib.get("tl")
+        if tl_id not in by_tl:
+            continue
+        src = conn.attrib.get("from")
+        dst = conn.attrib.get("to")
+        if not src or not dst or src.startswith(":") or dst.startswith(":"):
+            continue
+        key = (tl_id, src, dst)
+        if key in seen:
+            continue
+        seen.add(key)
+        by_tl[tl_id].append((src, dst))
+
+    route_root = ET.Element("routes")
+    ET.SubElement(route_root, "vType", {"id": "target_peak_car", "maxSpeed": "15", "length": "5"})
+    begin = float(args.target_peak_begin)
+    end = (
+        float(args.target_peak_end)
+        if args.target_peak_end is not None
+        else float(args.warmup_seconds + args.metric_seconds)
+    )
+    vph = float(args.target_peak_vph_per_route) * scale
+    total_routes = 0
+    for tl_id in tl_ids:
+        pairs = by_tl.get(tl_id) or []
+        if args.target_peak_routes_per_tl > 0:
+            pairs = pairs[: args.target_peak_routes_per_tl]
+        for idx, (src, dst) in enumerate(pairs):
+            route_id = f"target_peak_{tl_id}_{idx}"
+            ET.SubElement(route_root, "route", {"id": route_id, "edges": f"{src} {dst}"})
+            ET.SubElement(
+                route_root,
+                "flow",
+                {
+                    "id": f"{route_id}_flow",
+                    "type": "target_peak_car",
+                    "route": route_id,
+                    "begin": f"{begin:g}",
+                    "end": f"{end:g}",
+                    "vehsPerHour": f"{vph:.6f}".rstrip("0").rstrip("."),
+                    "departLane": "best",
+                    "departPos": "random",
+                    "departSpeed": "max",
+                    "color": "blue",
+                },
+            )
+            total_routes += 1
+    if total_routes == 0:
+        raise ValueError(f"target peak found no controlled connections for TLs: {tl_ids}")
+
+    out = runtime_dir / f"target_peak.demand_x{scale:g}.rou.xml"
+    ET.ElementTree(route_root).write(out, encoding="utf-8", xml_declaration=True)
+    print_benchmark_log(
+        "target_peak_route_file_written",
+        {
+            "route_file": str(out),
+            "tl_ids": tl_ids,
+            "routes_per_tl_limit": args.target_peak_routes_per_tl,
+            "route_count": total_routes,
+            "vehs_per_hour_per_route": vph,
+            "begin": begin,
+            "end": end,
+        },
+    )
+    return out
+
+
+def _scaled_numeric_text(value: str, divisor: float) -> str:
+    scaled = float(value) / divisor
+    return f"{scaled:.6f}".rstrip("0").rstrip(".")
+
+
+def scale_route_file(src: Path, dst: Path, scale: float) -> None:
+    tree = ET.parse(src)
+    root = tree.getroot()
+    original_children = list(root)
+    for el in root.iter():
+        tag = el.tag.split("}")[-1]
+        if tag == "flow":
+            if "period" in el.attrib:
+                el.set("period", _scaled_numeric_text(el.attrib["period"], scale))
+            elif "vehsPerHour" in el.attrib:
+                el.set("vehsPerHour", f"{float(el.attrib['vehsPerHour']) * scale:.6f}".rstrip("0").rstrip("."))
+            elif "probability" in el.attrib:
+                el.set("probability", f"{min(1.0, float(el.attrib['probability']) * scale):.6f}".rstrip("0").rstrip("."))
+            elif "number" in el.attrib:
+                el.set("number", str(max(1, int(round(float(el.attrib["number"]) * scale)))))
+
+    extra_fraction = scale - 1.0
+    if extra_fraction > 0:
+        whole_extra = int(math.floor(extra_fraction))
+        fractional_extra = extra_fraction - whole_extra
+        vehicle_like_tags = {"vehicle", "trip"}
+        vehicle_index = 0
+        clones: list[ET.Element] = []
+        for child in original_children:
+            tag = child.tag.split("}")[-1]
+            if tag not in vehicle_like_tags or "id" not in child.attrib:
+                continue
+            copies = whole_extra
+            if fractional_extra > 0 and ((vehicle_index * 9973) % 10000) < int(round(fractional_extra * 10000)):
+                copies += 1
+            for copy_index in range(copies):
+                clone = copy.deepcopy(child)
+                clone.set("id", f"{child.attrib['id']}_demand{scale:g}_{copy_index + 1}")
+                if "depart" in clone.attrib:
+                    depart = float(clone.attrib["depart"])
+                    clone.set("depart", f"{depart + 0.01 * (copy_index + 1):.6f}".rstrip("0").rstrip("."))
+                clones.append(clone)
+            vehicle_index += 1
+        for clone in clones:
+            root.append(clone)
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tree.write(dst, encoding="utf-8", xml_declaration=True)
 
 
 def parse_net_file(sumocfg: Path) -> Path:
@@ -654,6 +889,7 @@ def build_deepsignal_prompt(prediction_input: dict[str, Any], prefill: bool) -> 
 基于 prediction.phase_waits 的 pred_saturation，在满足全部硬约束前提下，输出下一周期各相位最终绿灯时间 final（单位：秒）。
 
 输入字段说明：
+- prediction.phase_waits[*].default_duration：SUMO 原始固定配时的该相位绿灯时长，单位秒，可作为基准参考。
 - prediction.phase_waits[*].min_green / max_green：绿灯时长上下限，单位秒。
 - prediction.phase_waits[*].pred_wait：预测等待车辆数。
 - prediction.phase_waits[*].pred_saturation：预测饱和度（pred_wait / capacity）。
@@ -666,6 +902,7 @@ def build_deepsignal_prompt(prediction_input: dict[str, Any], prefill: bool) -> 
 
 决策提示（非硬约束）：
 - 最终决策以 pred_saturation 为主，capacity 仅供参考。
+- 当总需求压力不高时，避免无意义地整体拉长周期；可参考 default_duration 进行缩短或小幅调整。
 
 输出要求（必须严格遵守）：
 1) 必须先输出 <start_working_out>...</end_working_out>，其中只写思考分析过程，不要输出最终 JSON。
@@ -677,6 +914,42 @@ def build_deepsignal_prompt(prediction_input: dict[str, Any], prefill: bool) -> 
     if prefill:
         prompt += "</end_working_out>"
     return prompt
+
+
+def build_deepsignal_json_prompt(prediction_input: dict[str, Any], prefill: bool) -> str:
+    if prefill:
+        raise ValueError("deepsignal_json prompt does not support assistant prefill")
+    input_json = json.dumps(prediction_input, indent=2, ensure_ascii=False)
+    eos_token = "<|endoftext|>"
+    system_content = """你是交通信号配时优化专家。
+请只输出最终 JSON，不要输出推理过程、XML 标签、Markdown、代码块或任何解释文字。"""
+    user_content = f"""【cycle_predict_input_json】{input_json}【/cycle_predict_input_json】
+
+任务（必须完成）：
+基于 prediction.phase_waits 的 pred_saturation，在满足全部硬约束前提下，输出下一周期各相位最终绿灯时间 final（单位：秒）。
+
+输入字段说明：
+- prediction.phase_waits[*].default_duration：SUMO 原始固定配时的该相位绿灯时长，单位秒，可作为基准参考。
+- prediction.phase_waits[*].min_green / max_green：绿灯时长上下限，单位秒。
+- prediction.phase_waits[*].pred_wait：预测等待车辆数。
+- prediction.phase_waits[*].pred_saturation：预测饱和度（pred_wait / capacity）。
+- prediction.phase_waits[*].capacity：相位容量，仅供参考。
+
+硬约束（必须满足）：
+1) 相位顺序固定：严格按 prediction.phase_waits 的顺序考虑并输出；不可跳相、不可重排。
+2) 每相位约束：final 必须满足 prediction.phase_waits[*].min_green ≤ final ≤ prediction.phase_waits[*].max_green。
+3) final 必须为整数秒。
+
+决策提示（非硬约束）：
+- 最终决策以 pred_saturation 为主，capacity 仅供参考。
+- 当总需求压力不高时，避免无意义地整体拉长周期；可参考 default_duration 进行缩短或小幅调整。
+
+输出要求（必须严格遵守）：
+1) 只输出 JSON，不允许输出其它文本。
+2) JSON 顶层必须是数组(list)，每个元素必须是 {{"phase_id": <int>, "final": <int>}}。
+3) 必须覆盖 prediction.phase_waits 中所有相位ID，不能缺少或多余，不能输出额外字段。
+4) 不要输出示例，不要重复题目，不要输出第二个 JSON。"""
+    return system_content + eos_token + user_content
 
 
 def extract_solution_json(text: str) -> tuple[Any | None, str | None]:
@@ -762,8 +1035,16 @@ def validate_plan(
     return True, violations
 
 
-def strict_format_ok(text: str, parsed: Any, phase_waits: list[dict[str, Any]]) -> bool:
-    if not has_solution_block(text) or not isinstance(parsed, list):
+def strict_format_ok(
+    text: str,
+    parsed: Any,
+    phase_waits: list[dict[str, Any]],
+    *,
+    require_solution_block: bool = True,
+) -> bool:
+    if require_solution_block and not has_solution_block(text):
+        return False
+    if not isinstance(parsed, list):
         return False
     expected = [int(item["phase_id"]) for item in phase_waits]
     got: list[int] = []
@@ -798,8 +1079,10 @@ def call_model(
 ) -> ModelResult:
     if args.prompt_format == "native":
         prompt = build_native_prompt(prediction_input, args.prefill)
-    else:
+    elif args.prompt_format == "deepsignal":
         prompt = build_deepsignal_prompt(prediction_input, args.prefill)
+    else:
+        prompt = build_deepsignal_json_prompt(prediction_input, args.prefill)
 
     if args.model_backend == "openai":
         content, meta = _post_openai_chat(prompt, args)
@@ -837,6 +1120,7 @@ def call_model(
         raw_text,
         parsed,
         prediction_input["prediction"]["phase_waits"],
+        require_solution_block=args.prompt_format == "deepsignal",
     )
     return ModelResult(
         solution=solution,
@@ -878,9 +1162,8 @@ def get_green_phases(traci: Any, tl_id: str, args: argparse.Namespace) -> list[G
         if not lanes_in:
             continue
         duration = max(1, int(round(float(phase.duration))))
-        min_dur = int(round(float(getattr(phase, "minDur", 0) or 0)))
         max_dur = int(round(float(getattr(phase, "maxDur", 0) or 0)))
-        min_green = max(args.min_green, min_dur if min_dur > 0 else args.min_green)
+        min_green = int(args.min_green)
         max_green = max(args.max_green, max_dur if max_dur > 0 else args.max_green, min_green)
         capacity = max(1, len(lanes_in) * args.capacity_per_lane)
         out.append(
@@ -920,6 +1203,7 @@ def build_legacy_snapshot_prediction_input(
                 "phase_id": phase.phase_id,
                 "pred_wait": int(pred_wait),
                 "pred_saturation": round(float(pred_wait) / phase.capacity, 6),
+                "default_duration": phase.default_duration,
                 "min_green": phase.min_green,
                 "max_green": phase.max_green,
                 "capacity": phase.capacity,
@@ -968,7 +1252,9 @@ def build_github_official_prediction_input(
         waits.append(
             {
                 "phase_id": phase.phase_id,
+                "pred_wait": round(float(pred_wait), 6),
                 "pred_saturation": pred_saturation,
+                "default_duration": phase.default_duration,
                 "min_green": phase.min_green,
                 "max_green": phase.max_green,
                 "capacity": phase.capacity,
@@ -1093,7 +1379,115 @@ def collect_step_metrics(
     )
 
 
-def start_sumo(traci: Any, sumocfg: Path, args: argparse.Namespace, label: str) -> Any:
+def safe_path_token(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in value)
+
+
+def tripinfo_output_path(args: argparse.Namespace, scenario: str, tl_id: str) -> Path:
+    output_dir = Path(args.output_dir) if args.output_dir else PROJECT_ROOT / "runs" / "deepsignal_cycleplan"
+    name = f"{safe_path_token(scenario)}__{safe_path_token(tl_id)}.tripinfo.xml"
+    return output_dir / "sumo_outputs" / "tripinfo" / name
+
+
+def mean_or_none(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def parse_tripinfo_att_awt_metrics(
+    tripinfo_path: Path | None,
+    network_metric_departed_vehicle_ids: set[str],
+    target_tl_seen_vehicle_ids: set[str],
+    metric_start: int,
+    metric_end: int,
+    total_steps: int,
+    drain_seconds: int,
+) -> dict[str, Any]:
+    base = {
+        "tripinfo_path": str(tripinfo_path) if tripinfo_path else None,
+        "tripinfo_enabled": bool(tripinfo_path),
+        "tripinfo_parse_error": None,
+        "tripinfo_drain_seconds": drain_seconds,
+        "tripinfo_total_steps": total_steps,
+        "network_metric_departed_vehicle_count": len(network_metric_departed_vehicle_ids),
+        "network_trip_completed_count": 0,
+        "network_trip_completion_ratio": None,
+        "network_travel_time_total_sec": 0.0,
+        "network_waiting_time_total_sec": 0.0,
+        "network_att_sec": None,
+        "network_awt_sec": None,
+        "target_tl_seen_vehicle_count": len(target_tl_seen_vehicle_ids),
+        "target_tl_trip_completed_count": 0,
+        "target_tl_trip_completion_ratio": None,
+        "target_tl_travel_time_total_sec": 0.0,
+        "target_tl_waiting_time_total_sec": 0.0,
+        "target_tl_att_sec": None,
+        "target_tl_awt_sec": None,
+    }
+    if tripinfo_path is None:
+        return base
+    if not tripinfo_path.exists():
+        base["tripinfo_parse_error"] = "tripinfo_missing"
+        return base
+
+    network_durations: list[float] = []
+    network_waits: list[float] = []
+    target_durations: list[float] = []
+    target_waits: list[float] = []
+    try:
+        root = ET.parse(tripinfo_path).getroot()
+        for trip in root.iter("tripinfo"):
+            veh_id = trip.attrib.get("id")
+            if not veh_id:
+                continue
+            try:
+                duration = float(trip.attrib["duration"])
+                waiting_time = float(trip.attrib.get("waitingTime", "0"))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if veh_id in network_metric_departed_vehicle_ids:
+                network_durations.append(duration)
+                network_waits.append(waiting_time)
+            if veh_id in target_tl_seen_vehicle_ids:
+                target_durations.append(duration)
+                target_waits.append(waiting_time)
+    except Exception as exc:
+        base["tripinfo_parse_error"] = f"{type(exc).__name__}: {exc}"
+        return base
+
+    network_departed = len(network_metric_departed_vehicle_ids)
+    target_seen = len(target_tl_seen_vehicle_ids)
+    base.update(
+        {
+            "network_trip_completed_count": len(network_durations),
+            "network_trip_completion_ratio": (
+                len(network_durations) / network_departed if network_departed else None
+            ),
+            "network_travel_time_total_sec": float(sum(network_durations)),
+            "network_waiting_time_total_sec": float(sum(network_waits)),
+            "network_att_sec": mean_or_none(network_durations),
+            "network_awt_sec": mean_or_none(network_waits),
+            "target_tl_trip_completed_count": len(target_durations),
+            "target_tl_trip_completion_ratio": (
+                len(target_durations) / target_seen if target_seen else None
+            ),
+            "target_tl_travel_time_total_sec": float(sum(target_durations)),
+            "target_tl_waiting_time_total_sec": float(sum(target_waits)),
+            "target_tl_att_sec": mean_or_none(target_durations),
+            "target_tl_awt_sec": mean_or_none(target_waits),
+        }
+    )
+    return base
+
+
+def start_sumo(
+    traci: Any,
+    sumocfg: Path,
+    args: argparse.Namespace,
+    label: str,
+    *,
+    tripinfo_path: Path | None = None,
+    end_time: int | None = None,
+) -> Any:
     ensure_sumo_output_dirs(sumocfg)
     sumo_binary = _sumo_binary_path(args)
     cmd = [
@@ -1108,6 +1502,11 @@ def start_sumo(traci: Any, sumocfg: Path, args: argparse.Namespace, label: str) 
         "--seed",
         str(args.seed),
     ]
+    if end_time is not None:
+        cmd.extend(["--end", str(end_time)])
+    if tripinfo_path is not None:
+        tripinfo_path.parent.mkdir(parents=True, exist_ok=True)
+        cmd.extend(["--tripinfo-output", str(tripinfo_path)])
     if args.gui and args.gui_delay_ms is not None:
         cmd.extend(["--delay", str(args.gui_delay_ms)])
     traci.start(cmd, label=label, doSwitch=False, numRetries=args.traci_start_retries)
@@ -1205,6 +1604,13 @@ def run_one_tl(
 ) -> dict[str, Any]:
     traci_mod = _import_traci()
     traci_label = _make_traci_label(scenario, tl_id)
+    metric_start = args.warmup_seconds
+    metric_end = args.warmup_seconds + args.metric_seconds
+    control_total_steps = args.simulation_seconds if args.simulation_seconds is not None else metric_end
+    metric_end = min(metric_end, control_total_steps)
+    tripinfo_drain_seconds = max(0, int(args.tripinfo_drain_seconds)) if args.tripinfo_metrics else 0
+    total_steps = control_total_steps + tripinfo_drain_seconds
+    tripinfo_path = tripinfo_output_path(args, scenario, tl_id) if args.tripinfo_metrics else None
     sumo_cmd_preview = [
         str(_sumo_binary_path(args)),
         "-c",
@@ -1217,6 +1623,10 @@ def run_one_tl(
         "--seed",
         str(args.seed),
     ]
+    if total_steps is not None:
+        sumo_cmd_preview.extend(["--end", str(total_steps)])
+    if tripinfo_path is not None:
+        sumo_cmd_preview.extend(["--tripinfo-output", str(tripinfo_path)])
     write_benchmark_log(
         benchmark_log_fh,
         "sumo_start",
@@ -1229,26 +1639,39 @@ def run_one_tl(
         },
         to_stderr=args.log_events_to_stderr,
     )
-    traci = start_sumo(traci_mod, sumocfg, args, traci_label)
+    traci = start_sumo(
+        traci_mod,
+        sumocfg,
+        args,
+        traci_label,
+        tripinfo_path=tripinfo_path,
+        end_time=total_steps,
+    )
     forecaster = make_pred_wait_forecaster(args)
     queue_samples_raw: list[float] = []
     queue_samples_split_overlap: list[float] = []
     local_delay_total_s = 0.0
     incoming_vehicle_observations = 0
     throughput_total_intersection_passages = 0
+    queue_thresholds = normalized_queue_thresholds(args)
+    queue_over_threshold_steps_by_threshold = {threshold: 0 for threshold in queue_thresholds}
+    max_continuous_queue_over_threshold_steps_by_threshold = {threshold: 0 for threshold in queue_thresholds}
+    current_continuous_queue_over_threshold_steps_by_threshold = {threshold: 0 for threshold in queue_thresholds}
+    primary_queue_threshold = float(args.queue_threshold)
     prev_incoming_vehicle_ids: set[str] | None = None
     last_time_loss_by_vehicle: dict[str, float] = {}
+    network_metric_departed_vehicle_ids: set[str] = set()
+    target_tl_seen_vehicle_ids: set[str] = set()
     response_times: list[float] = []
     format_ok = 0
     control_usable = 0
     calls = 0
     applied = 0
+    fallback_applied = 0
     parse_errors: dict[str, int] = {}
     green_phases: list[GreenPhase] = []
     last_decision = -10**9
     steps_completed = 0
-    metric_start = args.warmup_seconds
-    metric_end = args.warmup_seconds + args.metric_seconds
     skipped_forecaster_not_ready = 0
 
     try:
@@ -1269,10 +1692,6 @@ def run_one_tl(
             to_stderr=args.log_events_to_stderr,
         )
 
-        total_steps = args.warmup_seconds + args.metric_seconds
-        if args.simulation_seconds is not None:
-            total_steps = args.simulation_seconds
-            metric_end = min(metric_end, total_steps)
         write_benchmark_log(
             benchmark_log_fh,
             "simulation_window_ready",
@@ -1281,6 +1700,8 @@ def run_one_tl(
                 "usage": usage,
                 "tl_id": tl_id,
                 "total_steps": total_steps,
+                "control_total_steps": control_total_steps,
+                "tripinfo_drain_seconds": tripinfo_drain_seconds,
                 "metric_start": metric_start,
                 "metric_end": metric_end,
                 "gui": bool(args.gui),
@@ -1291,7 +1712,11 @@ def run_one_tl(
 
         for step in range(total_steps):
             sim_time = int(traci.simulation.getTime())
-            should_decide = args.controller == "model" and sim_time - last_decision >= args.decision_interval_seconds
+            should_decide = (
+                args.controller == "model"
+                and sim_time < control_total_steps
+                and sim_time - last_decision >= args.decision_interval_seconds
+            )
             if should_decide:
                 if args.input_mode == "github_official":
                     if forecaster is None:
@@ -1363,6 +1788,7 @@ def run_one_tl(
                     if result.parse_error:
                         parse_errors[result.parse_error] = parse_errors.get(result.parse_error, 0) + 1
                     applied_solution = None
+                    fallback_reason = None
                     if result.control_usable and result.solution is not None:
                         applied_solution = clip_solution(
                             prediction_input["prediction"]["phase_waits"],
@@ -1370,6 +1796,22 @@ def run_one_tl(
                         )
                         apply_cycle_plan(traci, tl_id, green_phases, applied_solution)
                         applied += 1
+                    elif args.model_fail_policy in {"min_green", "first_min_green", "random_valid"}:
+                        if args.model_fail_policy == "first_min_green":
+                            applied_solution = {str(green_phases[0].phase_id): int(green_phases[0].min_green)}
+                        elif args.model_fail_policy == "random_valid":
+                            index = (int(sim_time) + calls + int(args.seed)) % len(green_phases)
+                            phase = green_phases[index]
+                            applied_solution = {str(phase.phase_id): int(phase.min_green)}
+                        else:
+                            applied_solution = {
+                                str(phase.phase_id): int(phase.min_green)
+                                for phase in green_phases
+                            }
+                        apply_cycle_plan(traci, tl_id, green_phases, applied_solution)
+                        applied += 1
+                        fallback_applied += 1
+                        fallback_reason = result.parse_error or "model_output_not_control_usable"
                     write_benchmark_log(
                         benchmark_log_fh,
                         "model_call_complete",
@@ -1382,6 +1824,8 @@ def run_one_tl(
                             "format_ok": result.format_ok,
                             "control_usable": result.control_usable,
                             "plan_applied": bool(applied_solution is not None),
+                            "fallback_applied": bool(fallback_reason),
+                            "fallback_reason": fallback_reason,
                             "elapsed_sec": result.elapsed_sec,
                             "parse_error": result.parse_error,
                             "violations": result.violations,
@@ -1399,6 +1843,7 @@ def run_one_tl(
                             "prediction_input": prediction_input,
                             "solution": result.solution,
                             "applied_solution": applied_solution,
+                            "fallback_reason": fallback_reason,
                             "format_ok": result.format_ok,
                             "control_usable": result.control_usable,
                             "violations": result.violations,
@@ -1410,10 +1855,15 @@ def run_one_tl(
 
             traci.simulationStep()
             steps_completed += 1
-            if forecaster is not None:
+            if forecaster is not None and step < control_total_steps:
                 forecaster.observe(traci, green_phases)
             current_incoming = incoming_vehicle_ids(traci, green_phases)
             if metric_start <= step < metric_end:
+                try:
+                    network_metric_departed_vehicle_ids.update(traci.simulation.getDepartedIDList())
+                except Exception:
+                    pass
+                target_tl_seen_vehicle_ids.update(current_incoming)
                 if prev_incoming_vehicle_ids is None:
                     prev_incoming_vehicle_ids = current_incoming
                 sample = collect_step_metrics(
@@ -1425,6 +1875,22 @@ def run_one_tl(
                 )
                 queue_samples_raw.extend(sample.phase_queues_raw)
                 queue_samples_split_overlap.extend(sample.phase_queues_split_overlap)
+                step_queues = (
+                    sample.phase_queues_split_overlap
+                    if args.phase_queue_mode == "split-overlap"
+                    else sample.phase_queues_raw
+                )
+                step_max_queue = max(step_queues) if step_queues else None
+                for threshold in queue_thresholds:
+                    if step_max_queue is not None and step_max_queue > threshold:
+                        queue_over_threshold_steps_by_threshold[threshold] += 1
+                        current_continuous_queue_over_threshold_steps_by_threshold[threshold] += 1
+                        max_continuous_queue_over_threshold_steps_by_threshold[threshold] = max(
+                            max_continuous_queue_over_threshold_steps_by_threshold[threshold],
+                            current_continuous_queue_over_threshold_steps_by_threshold[threshold],
+                        )
+                    else:
+                        current_continuous_queue_over_threshold_steps_by_threshold[threshold] = 0
                 local_delay_total_s += sample.local_delay_delta_s
                 incoming_vehicle_observations += sample.incoming_vehicle_count
                 throughput_total_intersection_passages += sample.passage_count
@@ -1434,7 +1900,7 @@ def run_one_tl(
                 last_time_loss_by_vehicle.clear()
     finally:
         try:
-            traci.close(False)
+            traci.close(bool(tripinfo_path))
             write_benchmark_log(
                 benchmark_log_fh,
                 "sumo_closed",
@@ -1444,6 +1910,7 @@ def run_one_tl(
                     "tl_id": tl_id,
                     "traci_label": traci_label,
                     "steps_completed": steps_completed,
+                    "tripinfo_path": str(tripinfo_path) if tripinfo_path else None,
                 },
                 to_stderr=args.log_events_to_stderr,
             )
@@ -1495,6 +1962,53 @@ def run_one_tl(
             },
             to_stderr=args.log_events_to_stderr,
         )
+    if primary_queue_threshold not in queue_over_threshold_steps_by_threshold:
+        primary_queue_threshold = queue_thresholds[0]
+    queue_over_threshold_by_key = {
+        metric_key_float(threshold): float(seconds)
+        for threshold, seconds in queue_over_threshold_steps_by_threshold.items()
+    }
+    queue_over_threshold_fraction_by_key = {
+        metric_key_float(threshold): (
+            seconds / max(1, metric_end - metric_start) if metric_active else None
+        )
+        for threshold, seconds in queue_over_threshold_steps_by_threshold.items()
+    }
+    max_continuous_queue_over_threshold_by_key = {
+        metric_key_float(threshold): float(seconds)
+        for threshold, seconds in max_continuous_queue_over_threshold_steps_by_threshold.items()
+    }
+    tripinfo_metrics = parse_tripinfo_att_awt_metrics(
+        tripinfo_path,
+        network_metric_departed_vehicle_ids,
+        target_tl_seen_vehicle_ids,
+        metric_start,
+        metric_end,
+        total_steps,
+        tripinfo_drain_seconds,
+    )
+    write_benchmark_log(
+        benchmark_log_fh,
+        "tripinfo_metrics_parsed",
+        {
+            "scenario": scenario,
+            "usage": usage,
+            "tl_id": tl_id,
+            "tripinfo_path": tripinfo_metrics["tripinfo_path"],
+            "tripinfo_parse_error": tripinfo_metrics["tripinfo_parse_error"],
+            "network_metric_departed_vehicle_count": tripinfo_metrics[
+                "network_metric_departed_vehicle_count"
+            ],
+            "network_trip_completed_count": tripinfo_metrics["network_trip_completed_count"],
+            "network_att_sec": tripinfo_metrics["network_att_sec"],
+            "network_awt_sec": tripinfo_metrics["network_awt_sec"],
+            "target_tl_seen_vehicle_count": tripinfo_metrics["target_tl_seen_vehicle_count"],
+            "target_tl_trip_completed_count": tripinfo_metrics["target_tl_trip_completed_count"],
+            "target_tl_att_sec": tripinfo_metrics["target_tl_att_sec"],
+            "target_tl_awt_sec": tripinfo_metrics["target_tl_awt_sec"],
+        },
+        to_stderr=args.log_events_to_stderr,
+    )
     row = {
         "scenario": scenario,
         "usage": usage,
@@ -1507,6 +2021,8 @@ def run_one_tl(
         "input_mode": args.input_mode,
         "model_backend": args.model_backend if args.controller == "model" else None,
         "prompt_format": args.prompt_format if args.controller == "model" else None,
+        "model_fail_policy": args.model_fail_policy if args.controller == "model" else None,
+        "demand_scale": args.demand_scale,
         "warmup_seconds": args.warmup_seconds,
         "metric_seconds": metric_end - metric_start,
         "eval_minutes": metric_minutes,
@@ -1518,6 +2034,7 @@ def run_one_tl(
         "model_calls": calls,
         "decision_count": calls,
         "plans_applied": applied,
+        "fallback_plans_applied": fallback_applied,
         "active_tl": metric_active,
         "inactive_reason": inactive_reason,
         "metric_window_steps": max(0, metric_end - metric_start),
@@ -1526,6 +2043,25 @@ def run_one_tl(
         "passage_per_metric_observation": passage_per_metric_observation,
         "passage_seen_ratio_approx": passage_per_metric_observation,
         "queue_sample_count": len(queue_samples_raw),
+        "queue_threshold": primary_queue_threshold,
+        "queue_thresholds": queue_thresholds,
+        "queue_over_threshold_seconds": float(
+            queue_over_threshold_steps_by_threshold[primary_queue_threshold]
+        ),
+        "queue_over_threshold_fraction": (
+            queue_over_threshold_steps_by_threshold[primary_queue_threshold]
+            / max(1, metric_end - metric_start)
+            if metric_active
+            else None
+        ),
+        "max_continuous_queue_over_threshold_seconds": float(
+            max_continuous_queue_over_threshold_steps_by_threshold[primary_queue_threshold]
+        ),
+        "queue_over_threshold_seconds_by_threshold": queue_over_threshold_by_key,
+        "queue_over_threshold_fraction_by_threshold": queue_over_threshold_fraction_by_key,
+        "max_continuous_queue_over_threshold_seconds_by_threshold": (
+            max_continuous_queue_over_threshold_by_key
+        ),
         "local_delay_total_s": local_delay_total_s,
         "local_delay_per_intersection_minute_sec": local_delay_per_intersection_minute_sec if metric_active else None,
         "sum_response_time_s": sum(response_times),
@@ -1545,7 +2081,15 @@ def run_one_tl(
         "throughput_veh_per_min": raw_throughput if metric_active else None,
         "avg_response_time_sec": mean(response_times) if response_times else None,
         "parse_errors": parse_errors,
+        **tripinfo_metrics,
     }
+    for threshold in queue_thresholds:
+        suffix = metric_key_float(threshold)
+        row[f"queue_over_threshold_seconds_t{suffix}"] = queue_over_threshold_by_key[suffix]
+        row[f"queue_over_threshold_fraction_t{suffix}"] = queue_over_threshold_fraction_by_key[suffix]
+        row[f"max_continuous_queue_over_threshold_seconds_t{suffix}"] = (
+            max_continuous_queue_over_threshold_by_key[suffix]
+        )
     return row
 
 
@@ -1598,6 +2142,24 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         denominator = sum(float(row.get("decision_count") or 0.0) for row in items)
         return numerator / denominator if denominator else None
 
+    def weighted_sum_over_count(
+        items: list[dict[str, Any]],
+        total_key: str,
+        count_key: str,
+    ) -> float | None:
+        numerator = sum(float(row.get(total_key) or 0.0) for row in items)
+        denominator = sum(float(row.get(count_key) or 0.0) for row in items)
+        return numerator / denominator if denominator else None
+
+    def weighted_completion_ratio(
+        items: list[dict[str, Any]],
+        completed_key: str,
+        denominator_key: str,
+    ) -> float | None:
+        completed = sum(float(row.get(completed_key) or 0.0) for row in items)
+        denominator = sum(float(row.get(denominator_key) or 0.0) for row in items)
+        return completed / denominator if denominator else None
+
     def weighted_local_delay_per_minute(items: list[dict[str, Any]]) -> float | None:
         numerator = sum(float(row.get("local_delay_total_s") or 0.0) for row in items)
         denominator = sum(
@@ -1609,6 +2171,11 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     def weighted_passage_observation_ratio(items: list[dict[str, Any]]) -> float | None:
         numerator = sum(float(row.get("throughput_total_intersection_passages") or 0.0) for row in items)
         denominator = sum(float(row.get("metric_vehicle_observations") or 0.0) for row in items)
+        return numerator / denominator if denominator else None
+
+    def weighted_queue_over_threshold_fraction(items: list[dict[str, Any]]) -> float | None:
+        numerator = sum(float(row.get("queue_over_threshold_seconds") or 0.0) for row in items)
+        denominator = sum(float(row.get("metric_window_steps") or 0.0) for row in items)
         return numerator / denominator if denominator else None
 
     def metric_bundle(items: list[dict[str, Any]], key: str) -> dict[str, float | None]:
@@ -1623,10 +2190,52 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             value = weighted_throughput(items)
         elif key == "avg_response_time_sec":
             value = weighted_response_time(items)
+        elif key == "network_att_sec":
+            value = weighted_sum_over_count(
+                items,
+                "network_travel_time_total_sec",
+                "network_trip_completed_count",
+            )
+        elif key == "network_awt_sec":
+            value = weighted_sum_over_count(
+                items,
+                "network_waiting_time_total_sec",
+                "network_trip_completed_count",
+            )
+        elif key == "target_tl_att_sec":
+            value = weighted_sum_over_count(
+                items,
+                "target_tl_travel_time_total_sec",
+                "target_tl_trip_completed_count",
+            )
+        elif key == "target_tl_awt_sec":
+            value = weighted_sum_over_count(
+                items,
+                "target_tl_waiting_time_total_sec",
+                "target_tl_trip_completed_count",
+            )
+        elif key == "network_trip_completion_ratio":
+            value = weighted_completion_ratio(
+                items,
+                "network_trip_completed_count",
+                "network_metric_departed_vehicle_count",
+            )
+        elif key == "target_tl_trip_completion_ratio":
+            value = weighted_completion_ratio(
+                items,
+                "target_tl_trip_completed_count",
+                "target_tl_seen_vehicle_count",
+            )
         elif key == "local_delay_per_intersection_minute_sec":
             value = weighted_local_delay_per_minute(items)
         elif key in {"passage_per_metric_observation", "passage_seen_ratio_approx"}:
             value = weighted_passage_observation_ratio(items)
+        elif key == "queue_over_threshold_fraction":
+            value = weighted_queue_over_threshold_fraction(items)
+        elif key == "queue_over_threshold_seconds":
+            value = float(mean(bucket)) if bucket else None
+        elif key == "max_continuous_queue_over_threshold_seconds":
+            value = float(mean(bucket)) if bucket else None
         else:
             value = float(mean(bucket)) if bucket else None
         return {
@@ -1644,6 +2253,21 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "local_delay_total_s": sum(float(row.get("local_delay_total_s") or 0.0) for row in items),
             "metric_vehicle_observations": sum(
                 float(row.get("metric_vehicle_observations") or 0.0) for row in items
+            ),
+            "queue_over_threshold_seconds": sum(
+                float(row.get("queue_over_threshold_seconds") or 0.0) for row in items
+            ),
+            "network_metric_departed_vehicle_count": sum(
+                float(row.get("network_metric_departed_vehicle_count") or 0.0) for row in items
+            ),
+            "network_trip_completed_count": sum(
+                float(row.get("network_trip_completed_count") or 0.0) for row in items
+            ),
+            "target_tl_seen_vehicle_count": sum(
+                float(row.get("target_tl_seen_vehicle_count") or 0.0) for row in items
+            ),
+            "target_tl_trip_completed_count": sum(
+                float(row.get("target_tl_trip_completed_count") or 0.0) for row in items
             ),
             "eval_intersection_minutes": sum(
                 float(row.get("eval_minutes") or 0.0) * float(row.get("controlled_tls_count") or 1.0)
@@ -1668,8 +2292,25 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "local_delay_per_intersection_minute_sec",
         "passage_per_metric_observation",
         "passage_seen_ratio_approx",
+        "queue_over_threshold_seconds",
+        "queue_over_threshold_fraction",
+        "max_continuous_queue_over_threshold_seconds",
+        "queue_over_threshold_seconds_t10",
+        "queue_over_threshold_seconds_t20",
+        "queue_over_threshold_seconds_t30",
+        "queue_over_threshold_seconds_t40",
+        "max_continuous_queue_over_threshold_seconds_t10",
+        "max_continuous_queue_over_threshold_seconds_t20",
+        "max_continuous_queue_over_threshold_seconds_t30",
+        "max_continuous_queue_over_threshold_seconds_t40",
         "throughput_veh_per_min",
         "avg_response_time_sec",
+        "network_att_sec",
+        "network_awt_sec",
+        "network_trip_completion_ratio",
+        "target_tl_att_sec",
+        "target_tl_awt_sec",
+        "target_tl_trip_completion_ratio",
     ):
         overall.update(metric_bundle(rows, key))
     overall["denominators"] = denominator_bundle(rows)
@@ -1698,8 +2339,25 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "local_delay_per_intersection_minute_sec",
             "passage_per_metric_observation",
             "passage_seen_ratio_approx",
+            "queue_over_threshold_seconds",
+            "queue_over_threshold_fraction",
+            "max_continuous_queue_over_threshold_seconds",
+            "queue_over_threshold_seconds_t10",
+            "queue_over_threshold_seconds_t20",
+            "queue_over_threshold_seconds_t30",
+            "queue_over_threshold_seconds_t40",
+            "max_continuous_queue_over_threshold_seconds_t10",
+            "max_continuous_queue_over_threshold_seconds_t20",
+            "max_continuous_queue_over_threshold_seconds_t30",
+            "max_continuous_queue_over_threshold_seconds_t40",
             "throughput_veh_per_min",
             "avg_response_time_sec",
+            "network_att_sec",
+            "network_awt_sec",
+            "network_trip_completion_ratio",
+            "target_tl_att_sec",
+            "target_tl_awt_sec",
+            "target_tl_trip_completion_ratio",
         ):
             payload.update(metric_bundle(items, key))
         usage_summary[usage] = payload
@@ -1721,8 +2379,25 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "local_delay_per_intersection_minute_sec": "sum(local_delay_total_s)/sum(eval_minutes*controlled_tls_count)",
             "passage_per_metric_observation": "sum(throughput_total_intersection_passages)/sum(metric_vehicle_observations)",
             "passage_seen_ratio_approx": "same_as_passage_per_metric_observation_not_unique_vehicle_ratio",
+            "queue_over_threshold_seconds": "mean_per_run_seconds_where_any_selected_phase_queue_exceeds_threshold",
+            "queue_over_threshold_fraction": "sum(queue_over_threshold_seconds)/sum(metric_window_steps)",
+            "max_continuous_queue_over_threshold_seconds": "mean_per_run_max_continuous_seconds_where_any_selected_phase_queue_exceeds_threshold",
+            "queue_over_threshold_seconds_t10": "mean_per_run_seconds_above_queue_threshold_10",
+            "queue_over_threshold_seconds_t20": "mean_per_run_seconds_above_queue_threshold_20",
+            "queue_over_threshold_seconds_t30": "mean_per_run_seconds_above_queue_threshold_30",
+            "queue_over_threshold_seconds_t40": "mean_per_run_seconds_above_queue_threshold_40",
+            "max_continuous_queue_over_threshold_seconds_t10": "mean_per_run_longest_continuous_seconds_above_queue_threshold_10",
+            "max_continuous_queue_over_threshold_seconds_t20": "mean_per_run_longest_continuous_seconds_above_queue_threshold_20",
+            "max_continuous_queue_over_threshold_seconds_t30": "mean_per_run_longest_continuous_seconds_above_queue_threshold_30",
+            "max_continuous_queue_over_threshold_seconds_t40": "mean_per_run_longest_continuous_seconds_above_queue_threshold_40",
             "throughput_veh_per_min": "sum(throughput_total_intersection_passages)/sum(eval_minutes*controlled_tls_count)",
             "avg_response_time_sec": "weighted_by_decision_count",
+            "network_att_sec": "sum(network_travel_time_total_sec)/sum(network_trip_completed_count)",
+            "network_awt_sec": "sum(network_waiting_time_total_sec)/sum(network_trip_completed_count)",
+            "network_trip_completion_ratio": "sum(network_trip_completed_count)/sum(network_metric_departed_vehicle_count)",
+            "target_tl_att_sec": "sum(target_tl_travel_time_total_sec)/sum(target_tl_trip_completed_count)",
+            "target_tl_awt_sec": "sum(target_tl_waiting_time_total_sec)/sum(target_tl_trip_completed_count)",
+            "target_tl_trip_completion_ratio": "sum(target_tl_trip_completed_count)/sum(target_tl_seen_vehicle_count)",
         },
         "inactive_tl_definition": (
             "no incoming vehicle observations, no intersection passages, "
@@ -1871,6 +2546,9 @@ def predictor_meta(args: argparse.Namespace) -> dict[str, Any]:
 def validate_runtime_args(args: argparse.Namespace) -> None:
     if args.forecaster_min_history_steps > args.forecaster_history_steps:
         raise ValueError("--forecaster-min-history-steps must be <= --forecaster-history-steps")
+    if args.tripinfo_drain_seconds < 0:
+        raise ValueError("--tripinfo-drain-seconds must be >= 0")
+    normalized_queue_thresholds(args)
     if args.gui_delay_ms is not None and args.gui_delay_ms < 0:
         raise ValueError("--gui-delay-ms must be >= 0")
     if args.traci_start_retries < 1:
@@ -1888,8 +2566,10 @@ def validate_runtime_args(args: argparse.Namespace) -> None:
             "--input-mode github_official requires an explicit --pred-wait-forecaster; "
             "use rolling_mean until the official predictor is available"
         )
-    if args.prompt_format != "deepsignal":
-        raise ValueError("--input-mode github_official requires --prompt-format deepsignal")
+    if args.prompt_format not in {"deepsignal", "deepsignal_json"}:
+        raise ValueError(
+            "--input-mode github_official requires --prompt-format deepsignal or deepsignal_json"
+        )
     if args.prefill:
         raise ValueError("--input-mode github_official requires --no-prefill to keep the README prompt intact")
     if args.model_backend == "openai" and args.openai_json_system_prompt:
@@ -1918,7 +2598,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--controller", choices=["fixed", "model"], default="fixed")
     parser.add_argument("--input-mode", choices=["legacy_snapshot", "github_official"], default="legacy_snapshot")
     parser.add_argument("--model-backend", choices=["llama", "openai", "hf"], default="llama")
-    parser.add_argument("--prompt-format", choices=["native", "deepsignal"], default="native")
+    parser.add_argument("--prompt-format", choices=["native", "deepsignal", "deepsignal_json"], default="native")
     parser.add_argument("--prefill", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--gguf-path", type=Path, default=DEFAULT_GGUF)
     parser.add_argument("--llama-server", type=Path, default=Path("/opt/homebrew/bin/llama-server"))
@@ -1932,6 +2612,61 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--max-green", type=int, default=90)
     parser.add_argument("--capacity-per-lane", type=int, default=30)
     parser.add_argument("--phase-queue-mode", choices=["raw", "split-overlap"], default="raw")
+    parser.add_argument("--queue-threshold", type=float, default=10.0)
+    parser.add_argument(
+        "--queue-thresholds",
+        type=float,
+        nargs="+",
+        default=None,
+        help=(
+            "Queue thresholds to record in parallel. The legacy queue_over_threshold "
+            "fields continue to use --queue-threshold."
+        ),
+    )
+    parser.add_argument(
+        "--demand-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Uniform route demand multiplier. flow period is divided by this "
+            "factor, and explicit vehicle/trip demand is duplicated "
+            "deterministically for factors above 1.0."
+        ),
+    )
+    parser.add_argument(
+        "--target-peak-tl-id",
+        action="append",
+        default=[],
+        help=(
+            "Traffic light id to receive additional synthetic peak flows. May be repeated. "
+            "Flows use controlled from->to connections in the SUMO net."
+        ),
+    )
+    parser.add_argument(
+        "--target-peak-vph-per-route",
+        type=float,
+        default=0.0,
+        help="Synthetic peak vehicles/hour per generated from->to route before demand scaling.",
+    )
+    parser.add_argument(
+        "--target-peak-routes-per-tl",
+        type=int,
+        default=8,
+        help="Maximum synthetic from->to routes generated per target TL. 0 means all.",
+    )
+    parser.add_argument("--target-peak-begin", type=float, default=0.0)
+    parser.add_argument("--target-peak-end", type=float, default=None)
+    parser.add_argument(
+        "--model-fail-policy",
+        choices=["keep_default", "min_green", "first_min_green", "random_valid"],
+        default="keep_default",
+        help=(
+            "Policy when a model call is not control-usable. keep_default leaves "
+            "the current SUMO signal program untouched; min_green applies a legal "
+            "minimum-green plan; first_min_green and random_valid are harsher "
+            "stress policies for exposing invalid model outputs."
+        ),
+    )
     parser.add_argument("--pred-wait-forecaster", choices=["none", "rolling_mean"], default="none")
     parser.add_argument("--forecaster-history-steps", type=int, default=60)
     parser.add_argument("--forecaster-min-history-steps", type=int, default=5)
@@ -1956,6 +2691,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--hf-adapter-path", type=Path, default=None)
     parser.add_argument("--hf-dtype", choices=["auto", "bfloat16", "float16", "float32"], default="auto")
     parser.add_argument("--hf-device-map", default="auto")
+    parser.add_argument("--tripinfo-metrics", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--tripinfo-drain-seconds",
+        type=int,
+        default=0,
+        help=(
+            "Extra post-metric SUMO seconds used only to let vehicles complete "
+            "tripinfo for ATT/AWT. Model control and queue/delay metrics stop at "
+            "the normal metric window."
+        ),
+    )
     parser.add_argument("--continue-on-run-error", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args(argv)
 
@@ -2004,8 +2750,10 @@ def main(argv: list[str] | None = None) -> int:
             "metric_seconds": args.metric_seconds,
             "metric_start_second": args.warmup_seconds,
             "metric_end_second": args.warmup_seconds + args.metric_seconds,
+            "tripinfo_drain_seconds": args.tripinfo_drain_seconds if args.tripinfo_metrics else 0,
             "official_window_enforced": args.input_mode == "github_official",
         },
+        "queue_thresholds_effective": normalized_queue_thresholds(args),
     }
     write_json(output_dir / "config.json", config_payload)
     write_json(output_dir / "predictor_meta.json", predictor_meta(args))
@@ -2096,7 +2844,9 @@ def main(argv: list[str] | None = None) -> int:
                             "usage": usage,
                             "tl_id": tl_id,
                             "model_calls": row["model_calls"],
+                            "demand_scale": row["demand_scale"],
                             "plans_applied": row["plans_applied"],
+                            "fallback_plans_applied": row["fallback_plans_applied"],
                             "steps_completed": row["steps_completed"],
                             "format_success_rate": row["format_success_rate"],
                             "control_usable_rate": row["control_usable_rate"],
@@ -2109,6 +2859,32 @@ def main(argv: list[str] | None = None) -> int:
                                 "local_delay_per_intersection_minute_sec"
                             ],
                             "passage_per_metric_observation": row["passage_per_metric_observation"],
+                            "queue_threshold": row["queue_threshold"],
+                            "queue_over_threshold_seconds": row["queue_over_threshold_seconds"],
+                            "queue_over_threshold_fraction": row["queue_over_threshold_fraction"],
+                            "max_continuous_queue_over_threshold_seconds": row[
+                                "max_continuous_queue_over_threshold_seconds"
+                            ],
+                            "queue_over_threshold_seconds_by_threshold": row[
+                                "queue_over_threshold_seconds_by_threshold"
+                            ],
+                            "max_continuous_queue_over_threshold_seconds_by_threshold": row[
+                                "max_continuous_queue_over_threshold_seconds_by_threshold"
+                            ],
+                            "network_metric_departed_vehicle_count": row[
+                                "network_metric_departed_vehicle_count"
+                            ],
+                            "network_trip_completed_count": row["network_trip_completed_count"],
+                            "network_trip_completion_ratio": row["network_trip_completion_ratio"],
+                            "network_att_sec": row["network_att_sec"],
+                            "network_awt_sec": row["network_awt_sec"],
+                            "target_tl_seen_vehicle_count": row["target_tl_seen_vehicle_count"],
+                            "target_tl_trip_completed_count": row["target_tl_trip_completed_count"],
+                            "target_tl_trip_completion_ratio": row[
+                                "target_tl_trip_completion_ratio"
+                            ],
+                            "target_tl_att_sec": row["target_tl_att_sec"],
+                            "target_tl_awt_sec": row["target_tl_awt_sec"],
                             "avg_response_time_sec": row["avg_response_time_sec"],
                             "parse_errors": row["parse_errors"],
                         },
