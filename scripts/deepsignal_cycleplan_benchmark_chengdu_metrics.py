@@ -126,7 +126,23 @@ class ModelResult:
     solution: dict[str, int] | None
     format_ok: bool
     control_usable: bool
+    strict_control_usable: bool
+    directional_control_usable: bool
+    directional_violations: list[str]
+    relaxed_solution: dict[str, int] | None
+    relaxed_json_success: bool
+    relaxed_control_usable: bool
+    relaxed_directional_control_usable: bool
+    relaxed_directional_violations: list[str]
+    relaxed_parse_error: str | None
+    repaired_solution: dict[str, int] | None
+    repaired_control_usable: bool
+    repaired_directional_control_usable: bool
+    repaired_directional_violations: list[str]
+    repair_actions: list[str]
+    repair_error: str | None
     violations: list[str]
+    relaxed_violations: list[str]
     elapsed_sec: float | None
     raw_text: str
     parse_error: str | None
@@ -824,14 +840,29 @@ def _load_hf_stack(args: argparse.Namespace) -> tuple[Any, Any]:
     torch_dtype = dtype_map[args.hf_dtype]
     tokenizer_path = adapter_path if adapter_path and (adapter_path / "tokenizer.json").exists() else model_path
     tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_path), trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        str(model_path),
-        trust_remote_code=True,
-        device_map=args.hf_device_map,
-        torch_dtype=torch_dtype,
-        low_cpu_mem_usage=True,
-        attn_implementation="sdpa",
-    )
+    load_kwargs = {
+        "trust_remote_code": True,
+        "device_map": args.hf_device_map,
+        "torch_dtype": torch_dtype,
+        "low_cpu_mem_usage": True,
+        "attn_implementation": "sdpa",
+    }
+    model_load_errors: list[str] = []
+    try:
+        model = AutoModelForCausalLM.from_pretrained(str(model_path), **load_kwargs)
+    except Exception as exc:
+        model_load_errors.append(f"AutoModelForCausalLM: {type(exc).__name__}: {exc}")
+        model = None
+        for class_name in ("Gemma3ForConditionalGeneration", "AutoModelForImageTextToText"):
+            try:
+                module = __import__("transformers", fromlist=[class_name])
+                model_cls = getattr(module, class_name)
+                model = model_cls.from_pretrained(str(model_path), **load_kwargs)
+                break
+            except Exception as fallback_exc:
+                model_load_errors.append(f"{class_name}: {type(fallback_exc).__name__}: {fallback_exc}")
+        if model is None:
+            raise RuntimeError("HF model load failed: " + " | ".join(model_load_errors))
     if adapter_path is not None:
         from peft import PeftModel  # type: ignore
 
@@ -843,12 +874,37 @@ def _load_hf_stack(args: argparse.Namespace) -> tuple[Any, Any]:
     return tokenizer, model
 
 
-def _post_hf_generate(prompt: str, args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
+def _post_hf_generate(
+    prompt: str,
+    args: argparse.Namespace,
+    messages: list[dict[str, str]] | None = None,
+) -> tuple[str, dict[str, Any]]:
     tokenizer, model = _load_hf_stack(args)
     import torch  # type: ignore
 
     t0 = time.time()
-    inputs = tokenizer(prompt, return_tensors="pt")
+    rendered_prompt = prompt
+    used_chat_template = False
+    if args.hf_use_chat_template:
+        if not getattr(tokenizer, "chat_template", None):
+            raise ValueError("--hf-use-chat-template requested but tokenizer has no chat_template")
+        chat_messages = messages or [{"role": "user", "content": prompt}]
+        try:
+            rendered_prompt = tokenizer.apply_chat_template(
+                chat_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=args.hf_chat_template_enable_thinking,
+            )
+        except TypeError:
+            rendered_prompt = tokenizer.apply_chat_template(
+                chat_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        used_chat_template = True
+
+    inputs = tokenizer(rendered_prompt, return_tensors="pt")
     device = next(model.parameters()).device
     inputs = {key: value.to(device) for key, value in inputs.items()}
     with torch.inference_mode():
@@ -862,9 +918,28 @@ def _post_hf_generate(prompt: str, args: argparse.Namespace) -> tuple[str, dict[
             use_cache=True,
         )
     generated = output_ids[0, inputs["input_ids"].shape[1] :]
-    text = tokenizer.decode(generated, skip_special_tokens=False)
+    text = tokenizer.decode(generated, skip_special_tokens=args.hf_skip_special_tokens)
     elapsed = time.time() - t0
-    return text, {"elapsed_sec": elapsed, "http_status": None, "timeout": False}
+    return text, {
+        "elapsed_sec": elapsed,
+        "http_status": None,
+        "timeout": False,
+        "hf_use_chat_template": used_chat_template,
+        "hf_chat_template_message_mode": args.hf_chat_template_message_mode,
+        "hf_skip_special_tokens": args.hf_skip_special_tokens,
+    }
+
+
+def build_hf_chat_messages(prompt: str, args: argparse.Namespace) -> list[dict[str, str]]:
+    if args.hf_chat_template_message_mode == "single_user":
+        return [{"role": "user", "content": prompt.replace("<|endoftext|>", "\n\n").strip()}]
+    if args.prompt_format in {"deepsignal", "deepsignal_json"} and "<|endoftext|>" in prompt:
+        system_content, user_content = prompt.split("<|endoftext|>", 1)
+        return [
+            {"role": "system", "content": system_content.strip()},
+            {"role": "user", "content": user_content.strip()},
+        ]
+    return [{"role": "user", "content": prompt}]
 
 
 def build_native_prompt(prediction_input: dict[str, Any], prefill: bool) -> str:
@@ -973,8 +1048,152 @@ def extract_solution_json(text: str) -> tuple[Any | None, str | None]:
         return None, f"json_decode: {exc}"
 
 
+def extract_solution_json_relaxed(text: str) -> tuple[Any | None, str | None]:
+    """Extract the first JSON payload that could plausibly contain a plan.
+
+    This intentionally differs from the strict protocol parser: it tolerates
+    missing XML-like tags, Markdown fences, explanations before/after JSON, and
+    trailing text after a valid JSON object/array. It still returns only parsed
+    JSON; schema repair is handled separately and logged.
+    """
+    stripped = text.strip()
+    candidates: list[str] = []
+    if "<SOLUTION>" in stripped:
+        start = stripped.rfind("<SOLUTION>") + len("<SOLUTION>")
+        end = stripped.rfind("</SOLUTION>")
+        candidates.append(stripped[start:end].strip() if end > start else stripped[start:].strip())
+    candidates.append(stripped)
+    decoder = json.JSONDecoder()
+    errors: list[str] = []
+    for candidate in candidates:
+        for idx, char in enumerate(candidate):
+            if char not in "[{":
+                continue
+            try:
+                parsed, _ = decoder.raw_decode(candidate[idx:])
+                return parsed, None
+            except json.JSONDecodeError as exc:
+                errors.append(f"json_decode@{idx}: {exc}")
+    if errors:
+        return None, errors[0]
+    return None, "json_not_found"
+
+
+def first_complete_json_text(text: str) -> str | None:
+    """Return only the first complete JSON object/array embedded in text."""
+    decoder = json.JSONDecoder()
+    stripped = text.strip()
+    for idx, char in enumerate(stripped):
+        if char not in "[{":
+            continue
+        try:
+            _, end = decoder.raw_decode(stripped[idx:])
+        except json.JSONDecodeError:
+            continue
+        return stripped[idx : idx + end].strip()
+    return None
+
+
 def has_solution_block(text: str) -> bool:
     return "<SOLUTION>" in text and "</SOLUTION>" in text
+
+
+def _coerce_int(value: Any) -> tuple[int | None, str | None]:
+    if isinstance(value, bool):
+        return None, "bool_not_int"
+    if isinstance(value, int):
+        return int(value), None
+    if isinstance(value, float) and math.isfinite(value):
+        if abs(value - round(value)) <= 1e-6:
+            return int(round(value)), "float_to_int"
+        return None, "non_integral_float"
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            as_float = float(text)
+        except ValueError:
+            return None, "string_not_numeric"
+        if math.isfinite(as_float) and abs(as_float - round(as_float)) <= 1e-6:
+            return int(round(as_float)), "numeric_string_to_int"
+        return None, "non_integral_numeric_string"
+    return None, "not_int_like"
+
+
+def _solution_payload_from_relaxed_json(parsed: Any) -> Any:
+    if isinstance(parsed, list):
+        return parsed
+    if not isinstance(parsed, dict):
+        return parsed
+    for key in ("solution", "SOLUTION", "final_solution", "phase_waits", "phases", "plan"):
+        value = parsed.get(key)
+        if isinstance(value, (list, dict)):
+            return value
+    return parsed
+
+
+def normalize_solution_relaxed(parsed: Any) -> tuple[dict[str, int] | None, str | None, list[str]]:
+    payload = _solution_payload_from_relaxed_json(parsed)
+    actions: list[str] = []
+    if isinstance(payload, dict):
+        out: dict[str, int] = {}
+        for key, value in payload.items():
+            if isinstance(value, dict):
+                value = (
+                    value.get("final")
+                    if "final" in value
+                    else value.get("green_time")
+                    if "green_time" in value
+                    else value.get("green")
+                    if "green" in value
+                    else value.get("duration")
+                    if "duration" in value
+                    else value.get("green_duration")
+                )
+                actions.append("dict_nested_value")
+            phase_id, phase_action = _coerce_int(key)
+            final, final_action = _coerce_int(value)
+            if phase_id is None:
+                return None, f"phase_id_{phase_action}", actions
+            if final is None:
+                return None, f"final_{final_action}", actions
+            if phase_action:
+                actions.append(f"phase_id_{phase_action}")
+            if final_action:
+                actions.append(f"final_{final_action}")
+            out[str(phase_id)] = final
+        return out, None, sorted(set(actions))
+    if isinstance(payload, list):
+        out = {}
+        for item in payload:
+            if not isinstance(item, dict):
+                return None, "array_item_not_object", actions
+            phase_value = item.get("phase_id", item.get("phase", item.get("id")))
+            final_value = (
+                item.get("final")
+                if "final" in item
+                else item.get("green_time")
+                if "green_time" in item
+                else item.get("green")
+                if "green" in item
+                else item.get("duration")
+                if "duration" in item
+                else item.get("green_duration")
+            )
+            if set(item) != {"phase_id", "final"}:
+                actions.append("drop_extra_or_alias_fields")
+            phase_id, phase_action = _coerce_int(phase_value)
+            final, final_action = _coerce_int(final_value)
+            if phase_id is None:
+                return None, f"phase_id_{phase_action}", actions
+            if final is None:
+                return None, f"final_{final_action}", actions
+            if phase_action:
+                actions.append(f"phase_id_{phase_action}")
+            if final_action:
+                actions.append(f"final_{final_action}")
+            out[str(phase_id)] = final
+        return out, None, sorted(set(actions))
+    return None, "solution_not_dict_or_array", actions
 
 
 def normalize_solution(
@@ -1035,6 +1254,41 @@ def validate_plan(
     return True, violations
 
 
+def validate_directional_control(
+    phase_waits: list[dict[str, Any]],
+    solution: dict[str, int] | None,
+    args: argparse.Namespace,
+) -> tuple[bool, list[str]]:
+    control_usable, base_violations = validate_plan(phase_waits, solution)
+    if not control_usable or base_violations:
+        return False, base_violations or ["not_control_usable"]
+
+    min_delta = float(args.directional_control_min_delta_sec)
+    saturation_gap = float(args.directional_control_saturation_gap)
+    green_tolerance = float(args.directional_control_green_tolerance_sec)
+
+    expected = [str(item["phase_id"]) for item in phase_waits]
+    finals = [int(solution[phase_id]) for phase_id in expected]
+    defaults = [int(item["default_duration"]) for item in phase_waits]
+    saturations = [float(item.get("pred_saturation") or 0.0) for item in phase_waits]
+    violations: list[str] = []
+
+    if max(abs(final - default) for final, default in zip(finals, defaults)) < min_delta:
+        violations.append("no_nontrivial_adjustment")
+
+    for high_idx, high_sat in enumerate(saturations):
+        for low_idx, low_sat in enumerate(saturations):
+            if high_sat <= low_sat + saturation_gap:
+                continue
+            if finals[high_idx] + green_tolerance < finals[low_idx]:
+                violations.append("higher_saturation_less_green")
+                break
+        if "higher_saturation_less_green" in violations:
+            break
+
+    return not violations, violations
+
+
 def strict_format_ok(
     text: str,
     parsed: Any,
@@ -1072,6 +1326,68 @@ def clip_solution(phase_waits: list[dict[str, Any]], solution: dict[str, int]) -
     return clipped
 
 
+def repair_solution_for_online_control(
+    phase_waits: list[dict[str, Any]],
+    solution: dict[str, int] | None,
+) -> tuple[dict[str, int] | None, bool, list[str], str | None]:
+    if solution is None:
+        return None, False, [], "no_solution"
+    expected = [str(item["phase_id"]) for item in phase_waits]
+    got = set(solution.keys())
+    missing = [phase_id for phase_id in expected if phase_id not in got]
+    if missing:
+        return None, False, [], "missing_phase"
+    actions: list[str] = []
+    extra = sorted(got - set(expected))
+    if extra:
+        actions.append("drop_extra_phases")
+    if list(solution.keys()) != expected:
+        actions.append("reorder_phases")
+    by_id = {str(item["phase_id"]): item for item in phase_waits}
+    repaired: dict[str, int] = {}
+    for phase_id in expected:
+        final = int(solution[phase_id])
+        info = by_id[phase_id]
+        lo = int(info["min_green"])
+        hi = int(info["max_green"])
+        clipped = max(lo, min(hi, final))
+        if clipped != final:
+            actions.append("clip_to_bounds")
+        repaired[phase_id] = clipped
+    control_usable, violations = validate_plan(phase_waits, repaired)
+    if not control_usable or violations:
+        return None, False, actions, ",".join(violations)
+    return repaired, True, sorted(set(actions)), None
+
+
+def model_result_error(parse_error: str, elapsed_sec: float | None = None) -> ModelResult:
+    return ModelResult(
+        solution=None,
+        format_ok=False,
+        control_usable=False,
+        strict_control_usable=False,
+        directional_control_usable=False,
+        directional_violations=["unparseable"],
+        relaxed_solution=None,
+        relaxed_json_success=False,
+        relaxed_control_usable=False,
+        relaxed_directional_control_usable=False,
+        relaxed_directional_violations=["unparseable"],
+        relaxed_parse_error=parse_error,
+        repaired_solution=None,
+        repaired_control_usable=False,
+        repaired_directional_control_usable=False,
+        repaired_directional_violations=["unparseable"],
+        repair_actions=[],
+        repair_error=parse_error,
+        violations=["unparseable"],
+        relaxed_violations=["unparseable"],
+        elapsed_sec=elapsed_sec,
+        raw_text="",
+        parse_error=parse_error,
+    )
+
+
 def call_model(
     port: int | None,
     prediction_input: dict[str, Any],
@@ -1087,23 +1403,18 @@ def call_model(
     if args.model_backend == "openai":
         content, meta = _post_openai_chat(prompt, args)
     elif args.model_backend == "hf":
-        content, meta = _post_hf_generate(prompt, args)
+        messages = build_hf_chat_messages(prompt, args) if args.hf_use_chat_template else None
+        content, meta = _post_hf_generate(prompt, args, messages=messages)
     else:
         if port is None:
             raise ValueError("llama backend requires a server port")
         content, meta = _post_completion(port, prompt, args)
     if not content and meta.get("error"):
         parse_error = f"http_error: {meta.get('error')}"
-        return ModelResult(
-            solution=None,
-            format_ok=False,
-            control_usable=False,
-            violations=["unparseable"],
-            elapsed_sec=meta.get("elapsed_sec"),
-            raw_text="",
-            parse_error=parse_error,
-        )
+        return model_result_error(parse_error, meta.get("elapsed_sec"))
     raw_text = ("<start_working_out>" + content) if args.prefill else content
+    if args.json_stop_after_first and args.prompt_format == "deepsignal_json":
+        raw_text = first_complete_json_text(raw_text) or raw_text
     parsed, parse_error = extract_solution_json(raw_text)
     solution, normalize_error = (
         normalize_solution(parsed, allow_dict=args.input_mode != "github_official")
@@ -1112,21 +1423,88 @@ def call_model(
     )
     if normalize_error is not None:
         parse_error = normalize_error
-    control_usable, violations = validate_plan(
+    control_usable_raw, violations = validate_plan(
         prediction_input["prediction"]["phase_waits"],
         solution,
     )
+    control_usable = bool(control_usable_raw and not violations)
     format_ok = parse_error is None and strict_format_ok(
         raw_text,
         parsed,
         prediction_input["prediction"]["phase_waits"],
         require_solution_block=args.prompt_format == "deepsignal",
     )
+    strict_control_usable = bool(format_ok and control_usable)
+    directional_control_usable, directional_violations = (
+        validate_directional_control(
+            prediction_input["prediction"]["phase_waits"],
+            solution,
+            args,
+        )
+        if strict_control_usable
+        else (False, violations or ["not_strict_control_usable"])
+    )
+
+    relaxed_parsed, relaxed_parse_error = extract_solution_json_relaxed(raw_text)
+    relaxed_solution, relaxed_normalize_error, relaxed_actions = (
+        normalize_solution_relaxed(relaxed_parsed)
+        if relaxed_parse_error is None
+        else (None, None, [])
+    )
+    if relaxed_normalize_error is not None:
+        relaxed_parse_error = relaxed_normalize_error
+    relaxed_json_success = relaxed_parse_error is None and relaxed_solution is not None
+    relaxed_control_usable_raw, relaxed_violations = validate_plan(
+        prediction_input["prediction"]["phase_waits"],
+        relaxed_solution,
+    )
+    relaxed_control_usable = bool(relaxed_json_success and relaxed_control_usable_raw and not relaxed_violations)
+    relaxed_directional_control_usable, relaxed_directional_violations = (
+        validate_directional_control(
+            prediction_input["prediction"]["phase_waits"],
+            relaxed_solution,
+            args,
+        )
+        if relaxed_control_usable
+        else (False, relaxed_violations or ["not_relaxed_control_usable"])
+    )
+    repaired_solution, repaired_control_usable, repair_actions, repair_error = (
+        repair_solution_for_online_control(
+            prediction_input["prediction"]["phase_waits"],
+            relaxed_solution,
+        )
+    )
+    repaired_directional_control_usable, repaired_directional_violations = (
+        validate_directional_control(
+            prediction_input["prediction"]["phase_waits"],
+            repaired_solution,
+            args,
+        )
+        if repaired_control_usable
+        else (False, [repair_error or "not_repaired_control_usable"])
+    )
+    repair_actions = sorted(set(relaxed_actions + repair_actions))
     return ModelResult(
         solution=solution,
         format_ok=format_ok,
         control_usable=control_usable,
+        strict_control_usable=strict_control_usable,
+        directional_control_usable=directional_control_usable,
+        directional_violations=directional_violations,
+        relaxed_solution=relaxed_solution,
+        relaxed_json_success=relaxed_json_success,
+        relaxed_control_usable=relaxed_control_usable,
+        relaxed_directional_control_usable=relaxed_directional_control_usable,
+        relaxed_directional_violations=relaxed_directional_violations,
+        relaxed_parse_error=relaxed_parse_error,
+        repaired_solution=repaired_solution,
+        repaired_control_usable=repaired_control_usable,
+        repaired_directional_control_usable=repaired_directional_control_usable,
+        repaired_directional_violations=repaired_directional_violations,
+        repair_actions=repair_actions,
+        repair_error=repair_error,
         violations=violations,
+        relaxed_violations=relaxed_violations,
         elapsed_sec=meta.get("elapsed_sec"),
         raw_text=raw_text,
         parse_error=parse_error,
@@ -1665,14 +2043,31 @@ def run_one_tl(
     response_times: list[float] = []
     format_ok = 0
     control_usable = 0
+    strict_control_usable = 0
+    directional_control_usable = 0
+    relaxed_json_success = 0
+    relaxed_control_usable = 0
+    relaxed_directional_control_usable = 0
+    repaired_control_usable = 0
+    repaired_directional_control_usable = 0
+    repair_applied = 0
     calls = 0
     applied = 0
     fallback_applied = 0
     parse_errors: dict[str, int] = {}
+    directional_violations: dict[str, int] = {}
+    relaxed_directional_violations: dict[str, int] = {}
+    repaired_directional_violations: dict[str, int] = {}
+    relaxed_parse_errors: dict[str, int] = {}
+    repair_errors: dict[str, int] = {}
+    repair_actions: dict[str, int] = {}
     green_phases: list[GreenPhase] = []
     last_decision = -10**9
     steps_completed = 0
     skipped_forecaster_not_ready = 0
+    pending_cycle_plan: dict[str, Any] | None = None
+    plans_queued = 0
+    delayed_plans_applied = 0
 
     try:
         green_phases = get_green_phases(traci, tl_id, args)
@@ -1718,6 +2113,31 @@ def run_one_tl(
                 and sim_time - last_decision >= args.decision_interval_seconds
             )
             if should_decide:
+                if args.action_delay_cycles == 1 and pending_cycle_plan is not None:
+                    apply_cycle_plan(traci, tl_id, green_phases, pending_cycle_plan["solution"])
+                    applied += 1
+                    delayed_plans_applied += 1
+                    if pending_cycle_plan.get("fallback_reason"):
+                        fallback_applied += 1
+                    write_benchmark_log(
+                        benchmark_log_fh,
+                        "delayed_plan_applied",
+                        {
+                            "scenario": scenario,
+                            "usage": usage,
+                            "tl_id": tl_id,
+                            "sim_time": sim_time,
+                            "applied_solution": pending_cycle_plan["solution"],
+                            "applied_control_mode": pending_cycle_plan.get("control_mode"),
+                            "fallback_applied": bool(pending_cycle_plan.get("fallback_reason")),
+                            "fallback_reason": pending_cycle_plan.get("fallback_reason"),
+                            "generated_sim_time": pending_cycle_plan.get("generated_sim_time"),
+                            "generated_call_index": pending_cycle_plan.get("generated_call_index"),
+                            "action_delay_cycles": args.action_delay_cycles,
+                        },
+                        to_stderr=args.log_events_to_stderr,
+                    )
+                    pending_cycle_plan = None
                 if args.input_mode == "github_official":
                     if forecaster is None:
                         raise RuntimeError("github_official input mode requires a pred_wait forecaster")
@@ -1781,37 +2201,138 @@ def run_one_tl(
                     last_decision = sim_time
                     if result.format_ok:
                         format_ok += 1
-                    if result.control_usable:
+                    if result.strict_control_usable:
                         control_usable += 1
+                        strict_control_usable += 1
+                    if result.directional_control_usable:
+                        directional_control_usable += 1
+                    if result.relaxed_json_success:
+                        relaxed_json_success += 1
+                    if result.relaxed_control_usable:
+                        relaxed_control_usable += 1
+                    if result.relaxed_directional_control_usable:
+                        relaxed_directional_control_usable += 1
+                    if result.repaired_control_usable:
+                        repaired_control_usable += 1
+                    if result.repaired_directional_control_usable:
+                        repaired_directional_control_usable += 1
                     if result.elapsed_sec is not None:
                         response_times.append(float(result.elapsed_sec))
                     if result.parse_error:
                         parse_errors[result.parse_error] = parse_errors.get(result.parse_error, 0) + 1
-                    applied_solution = None
-                    fallback_reason = None
-                    if result.control_usable and result.solution is not None:
-                        applied_solution = clip_solution(
-                            prediction_input["prediction"]["phase_waits"],
-                            result.solution,
+                    for violation in result.directional_violations:
+                        directional_violations[violation] = directional_violations.get(violation, 0) + 1
+                    for violation in result.relaxed_directional_violations:
+                        relaxed_directional_violations[violation] = (
+                            relaxed_directional_violations.get(violation, 0) + 1
                         )
-                        apply_cycle_plan(traci, tl_id, green_phases, applied_solution)
-                        applied += 1
-                    elif args.model_fail_policy in {"min_green", "first_min_green", "random_valid"}:
+                    for violation in result.repaired_directional_violations:
+                        repaired_directional_violations[violation] = (
+                            repaired_directional_violations.get(violation, 0) + 1
+                        )
+                    if result.relaxed_parse_error:
+                        relaxed_parse_errors[result.relaxed_parse_error] = (
+                            relaxed_parse_errors.get(result.relaxed_parse_error, 0) + 1
+                        )
+                    if result.repair_error:
+                        repair_errors[result.repair_error] = repair_errors.get(result.repair_error, 0) + 1
+                    for action in result.repair_actions:
+                        repair_actions[action] = repair_actions.get(action, 0) + 1
+                    candidate_solution = None
+                    fallback_reason = None
+                    candidate_control_mode = None
+                    if args.online_control_mode == "strict" and result.strict_control_usable and result.solution is not None:
+                        candidate_solution = clip_solution(prediction_input["prediction"]["phase_waits"], result.solution)
+                        candidate_control_mode = "strict"
+                    elif (
+                        args.online_control_mode == "directional"
+                        and result.directional_control_usable
+                        and result.solution is not None
+                    ):
+                        candidate_solution = clip_solution(prediction_input["prediction"]["phase_waits"], result.solution)
+                        candidate_control_mode = "directional"
+                    elif (
+                        args.online_control_mode == "relaxed"
+                        and result.relaxed_control_usable
+                        and result.relaxed_solution is not None
+                    ):
+                        candidate_solution = clip_solution(
+                            prediction_input["prediction"]["phase_waits"],
+                            result.relaxed_solution,
+                        )
+                        candidate_control_mode = "relaxed"
+                    elif (
+                        args.online_control_mode == "relaxed_directional"
+                        and result.relaxed_directional_control_usable
+                        and result.relaxed_solution is not None
+                    ):
+                        candidate_solution = clip_solution(
+                            prediction_input["prediction"]["phase_waits"],
+                            result.relaxed_solution,
+                        )
+                        candidate_control_mode = "relaxed_directional"
+                    elif (
+                        args.online_control_mode == "repaired"
+                        and result.repaired_control_usable
+                        and result.repaired_solution is not None
+                    ):
+                        candidate_solution = result.repaired_solution
+                        candidate_control_mode = "repaired"
+                        if result.repair_actions:
+                            repair_applied += 1
+                    elif (
+                        args.online_control_mode == "repaired_directional"
+                        and result.repaired_directional_control_usable
+                        and result.repaired_solution is not None
+                    ):
+                        candidate_solution = result.repaired_solution
+                        candidate_control_mode = "repaired_directional"
+                        if result.repair_actions:
+                            repair_applied += 1
+
+                    if candidate_solution is None and args.model_fail_policy in {
+                        "min_green",
+                        "first_min_green",
+                        "random_valid",
+                    }:
                         if args.model_fail_policy == "first_min_green":
-                            applied_solution = {str(green_phases[0].phase_id): int(green_phases[0].min_green)}
+                            candidate_solution = {str(green_phases[0].phase_id): int(green_phases[0].min_green)}
                         elif args.model_fail_policy == "random_valid":
                             index = (int(sim_time) + calls + int(args.seed)) % len(green_phases)
                             phase = green_phases[index]
-                            applied_solution = {str(phase.phase_id): int(phase.min_green)}
+                            candidate_solution = {str(phase.phase_id): int(phase.min_green)}
                         else:
-                            applied_solution = {
+                            candidate_solution = {
                                 str(phase.phase_id): int(phase.min_green)
                                 for phase in green_phases
                             }
-                        apply_cycle_plan(traci, tl_id, green_phases, applied_solution)
-                        applied += 1
-                        fallback_applied += 1
+                        candidate_control_mode = f"fallback:{args.model_fail_policy}"
                         fallback_reason = result.parse_error or "model_output_not_control_usable"
+
+                    applied_solution = None
+                    queued_solution = None
+                    applied_control_mode = None
+                    queued_control_mode = None
+                    plan_queued = False
+                    if candidate_solution is not None and args.action_delay_cycles == 0:
+                        apply_cycle_plan(traci, tl_id, green_phases, candidate_solution)
+                        applied_solution = candidate_solution
+                        applied_control_mode = candidate_control_mode
+                        applied += 1
+                        if fallback_reason:
+                            fallback_applied += 1
+                    elif candidate_solution is not None:
+                        pending_cycle_plan = {
+                            "solution": candidate_solution,
+                            "control_mode": candidate_control_mode,
+                            "fallback_reason": fallback_reason,
+                            "generated_sim_time": sim_time,
+                            "generated_call_index": calls,
+                        }
+                        plans_queued += 1
+                        queued_solution = candidate_solution
+                        queued_control_mode = candidate_control_mode
+                        plan_queued = True
                     write_benchmark_log(
                         benchmark_log_fh,
                         "model_call_complete",
@@ -1822,13 +2343,36 @@ def run_one_tl(
                             "sim_time": sim_time,
                             "call_index": calls,
                             "format_ok": result.format_ok,
-                            "control_usable": result.control_usable,
+                            "control_usable": result.strict_control_usable,
+                            "strict_format_ok": result.format_ok,
+                            "strict_control_usable": result.strict_control_usable,
+                            "directional_control_usable": result.directional_control_usable,
+                            "relaxed_json_success": result.relaxed_json_success,
+                            "relaxed_control_usable": result.relaxed_control_usable,
+                            "relaxed_directional_control_usable": result.relaxed_directional_control_usable,
+                            "repaired_control_usable": result.repaired_control_usable,
+                            "repaired_directional_control_usable": result.repaired_directional_control_usable,
+                            "repair_actions": result.repair_actions,
+                            "online_control_mode": args.online_control_mode,
+                            "action_delay_cycles": args.action_delay_cycles,
+                            "applied_control_mode": applied_control_mode,
+                            "queued_control_mode": queued_control_mode,
                             "plan_applied": bool(applied_solution is not None),
-                            "fallback_applied": bool(fallback_reason),
+                            "plan_queued": plan_queued,
+                            "queued_solution": queued_solution,
+                            "fallback_selected": bool(fallback_reason),
+                            "fallback_applied": bool(fallback_reason and applied_solution is not None),
                             "fallback_reason": fallback_reason,
+                            "pending_plan_after_call": bool(pending_cycle_plan is not None),
                             "elapsed_sec": result.elapsed_sec,
                             "parse_error": result.parse_error,
+                            "relaxed_parse_error": result.relaxed_parse_error,
+                            "repair_error": result.repair_error,
                             "violations": result.violations,
+                            "directional_violations": result.directional_violations,
+                            "relaxed_directional_violations": result.relaxed_directional_violations,
+                            "repaired_directional_violations": result.repaired_directional_violations,
+                            "relaxed_violations": result.relaxed_violations,
                         },
                         to_stderr=args.log_events_to_stderr,
                     )
@@ -1842,13 +2386,36 @@ def run_one_tl(
                             "input_mode": args.input_mode,
                             "prediction_input": prediction_input,
                             "solution": result.solution,
+                            "relaxed_solution": result.relaxed_solution,
+                            "repaired_solution": result.repaired_solution,
                             "applied_solution": applied_solution,
+                            "queued_solution": queued_solution,
+                            "online_control_mode": args.online_control_mode,
+                            "action_delay_cycles": args.action_delay_cycles,
+                            "applied_control_mode": applied_control_mode,
+                            "queued_control_mode": queued_control_mode,
+                            "plan_queued": plan_queued,
                             "fallback_reason": fallback_reason,
                             "format_ok": result.format_ok,
-                            "control_usable": result.control_usable,
+                            "control_usable": result.strict_control_usable,
+                            "strict_format_ok": result.format_ok,
+                            "strict_control_usable": result.strict_control_usable,
+                            "directional_control_usable": result.directional_control_usable,
+                            "relaxed_json_success": result.relaxed_json_success,
+                            "relaxed_control_usable": result.relaxed_control_usable,
+                            "relaxed_directional_control_usable": result.relaxed_directional_control_usable,
+                            "repaired_control_usable": result.repaired_control_usable,
+                            "repaired_directional_control_usable": result.repaired_directional_control_usable,
+                            "repair_actions": result.repair_actions,
                             "violations": result.violations,
+                            "directional_violations": result.directional_violations,
+                            "relaxed_directional_violations": result.relaxed_directional_violations,
+                            "repaired_directional_violations": result.repaired_directional_violations,
+                            "relaxed_violations": result.relaxed_violations,
                             "elapsed_sec": result.elapsed_sec,
                             "parse_error": result.parse_error,
+                            "relaxed_parse_error": result.relaxed_parse_error,
+                            "repair_error": result.repair_error,
                             "raw_text_tail": result.raw_text[-1000:],
                         },
                     )
@@ -2028,13 +2595,37 @@ def run_one_tl(
         "eval_minutes": metric_minutes,
         "phase_queue_mode": args.phase_queue_mode,
         "forecaster_not_ready_steps": skipped_forecaster_not_ready,
+        "online_control_mode": args.online_control_mode if args.controller == "model" else None,
+        "action_delay_cycles": args.action_delay_cycles if args.controller == "model" else 0,
         "format_success_rate": (format_ok / calls * 100.0) if calls else None,
         "control_usable_rate": (control_usable / calls * 100.0) if calls else None,
+        "strict_format_success_rate": (format_ok / calls * 100.0) if calls else None,
+        "strict_control_usable_rate": (strict_control_usable / calls * 100.0) if calls else None,
+        "directional_control_usable_rate": (directional_control_usable / calls * 100.0) if calls else None,
+        "relaxed_json_success_rate": (relaxed_json_success / calls * 100.0) if calls else None,
+        "relaxed_control_usable_rate": (relaxed_control_usable / calls * 100.0) if calls else None,
+        "relaxed_directional_control_usable_rate": (
+            relaxed_directional_control_usable / calls * 100.0
+        )
+        if calls
+        else None,
+        "repaired_control_usable_rate": (repaired_control_usable / calls * 100.0) if calls else None,
+        "repaired_directional_control_usable_rate": (
+            repaired_directional_control_usable / calls * 100.0
+        )
+        if calls
+        else None,
+        "repair_applied_rate": (repair_applied / calls * 100.0) if calls else None,
         "lint_success_rate": (control_usable / calls * 100.0) if calls else None,
         "model_calls": calls,
         "decision_count": calls,
+        "plans_queued": plans_queued,
+        "delayed_plans_applied": delayed_plans_applied,
+        "pending_plan_left_unapplied": bool(pending_cycle_plan is not None),
         "plans_applied": applied,
+        "plans_applied_rate": (applied / calls * 100.0) if calls else None,
         "fallback_plans_applied": fallback_applied,
+        "fallback_plan_rate": (fallback_applied / calls * 100.0) if calls else None,
         "active_tl": metric_active,
         "inactive_reason": inactive_reason,
         "metric_window_steps": max(0, metric_end - metric_start),
@@ -2081,6 +2672,12 @@ def run_one_tl(
         "throughput_veh_per_min": raw_throughput if metric_active else None,
         "avg_response_time_sec": mean(response_times) if response_times else None,
         "parse_errors": parse_errors,
+        "directional_violations": directional_violations,
+        "relaxed_directional_violations": relaxed_directional_violations,
+        "repaired_directional_violations": repaired_directional_violations,
+        "relaxed_parse_errors": relaxed_parse_errors,
+        "repair_errors": repair_errors,
+        "repair_actions": repair_actions,
         **tripinfo_metrics,
     }
     for threshold in queue_thresholds:
@@ -2180,7 +2777,21 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     def metric_bundle(items: list[dict[str, Any]], key: str) -> dict[str, float | None]:
         bucket = vals(items, key)
-        if key in {"format_success_rate", "control_usable_rate"}:
+        if key in {
+            "format_success_rate",
+            "control_usable_rate",
+            "strict_format_success_rate",
+            "strict_control_usable_rate",
+            "directional_control_usable_rate",
+            "relaxed_json_success_rate",
+            "relaxed_control_usable_rate",
+            "relaxed_directional_control_usable_rate",
+            "repaired_control_usable_rate",
+            "repaired_directional_control_usable_rate",
+            "repair_applied_rate",
+            "plans_applied_rate",
+            "fallback_plan_rate",
+        }:
             value = weighted_rate(items, key)
         elif key in {"avg_queue_vehicles", "p95_queue_vehicles", "max_queue_vehicles"}:
             value = weighted_queue(items, key)
@@ -2285,6 +2896,17 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for key in (
         "format_success_rate",
         "control_usable_rate",
+        "strict_format_success_rate",
+        "strict_control_usable_rate",
+        "directional_control_usable_rate",
+        "relaxed_json_success_rate",
+        "relaxed_control_usable_rate",
+        "relaxed_directional_control_usable_rate",
+        "repaired_control_usable_rate",
+        "repaired_directional_control_usable_rate",
+        "repair_applied_rate",
+        "plans_applied_rate",
+        "fallback_plan_rate",
         "avg_queue_vehicles",
         "p95_queue_vehicles",
         "max_queue_vehicles",
@@ -2332,6 +2954,17 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         for key in (
             "format_success_rate",
             "control_usable_rate",
+            "strict_format_success_rate",
+            "strict_control_usable_rate",
+            "directional_control_usable_rate",
+            "relaxed_json_success_rate",
+            "relaxed_control_usable_rate",
+            "relaxed_directional_control_usable_rate",
+            "repaired_control_usable_rate",
+            "repaired_directional_control_usable_rate",
+            "repair_applied_rate",
+            "plans_applied_rate",
+            "fallback_plan_rate",
             "avg_queue_vehicles",
             "p95_queue_vehicles",
             "max_queue_vehicles",
@@ -2372,6 +3005,17 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "aggregate_method": {
             "format_success_rate": "weighted_by_decision_count",
             "control_usable_rate": "weighted_by_decision_count",
+            "strict_format_success_rate": "weighted_by_decision_count",
+            "strict_control_usable_rate": "weighted_by_decision_count",
+            "directional_control_usable_rate": "weighted_by_decision_count",
+            "relaxed_json_success_rate": "weighted_by_decision_count",
+            "relaxed_control_usable_rate": "weighted_by_decision_count",
+            "relaxed_directional_control_usable_rate": "weighted_by_decision_count",
+            "repaired_control_usable_rate": "weighted_by_decision_count",
+            "repaired_directional_control_usable_rate": "weighted_by_decision_count",
+            "repair_applied_rate": "weighted_by_decision_count",
+            "plans_applied_rate": "weighted_by_decision_count",
+            "fallback_plan_rate": "weighted_by_decision_count",
             "avg_queue_vehicles": "weighted_by_queue_sample_count",
             "p95_queue_vehicles": "weighted_by_queue_sample_count",
             "max_queue_vehicles": "weighted_by_queue_sample_count",
@@ -2553,6 +3197,12 @@ def validate_runtime_args(args: argparse.Namespace) -> None:
         raise ValueError("--gui-delay-ms must be >= 0")
     if args.traci_start_retries < 1:
         raise ValueError("--traci-start-retries must be >= 1")
+    if args.directional_control_min_delta_sec < 0:
+        raise ValueError("--directional-control-min-delta-sec must be >= 0")
+    if args.directional_control_saturation_gap < 0:
+        raise ValueError("--directional-control-saturation-gap must be >= 0")
+    if args.directional_control_green_tolerance_sec < 0:
+        raise ValueError("--directional-control-green-tolerance-sec must be >= 0")
     if args.phase_queue_mode not in {"raw", "split-overlap"}:
         raise ValueError("--phase-queue-mode must be raw or split-overlap")
     if args.simulation_seconds is not None and args.simulation_seconds < args.warmup_seconds + args.metric_seconds:
@@ -2608,6 +3258,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--metric-seconds", type=int, default=1200)
     parser.add_argument("--simulation-seconds", type=int, default=None)
     parser.add_argument("--decision-interval-seconds", type=int, default=60)
+    parser.add_argument(
+        "--action-delay-cycles",
+        type=int,
+        choices=[0, 1],
+        default=0,
+        help=(
+            "Number of decision cycles between model generation and signal application. "
+            "0 preserves the legacy immediate controller; 1 queues each generated "
+            "plan and applies it at the next decision point."
+        ),
+    )
     parser.add_argument("--min-green", type=int, default=10)
     parser.add_argument("--max-green", type=int, default=90)
     parser.add_argument("--capacity-per-lane", type=int, default=30)
@@ -2667,6 +3328,65 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
             "stress policies for exposing invalid model outputs."
         ),
     )
+    parser.add_argument(
+        "--online-control-mode",
+        choices=[
+            "strict",
+            "directional",
+            "relaxed",
+            "relaxed_directional",
+            "repaired",
+            "repaired_directional",
+        ],
+        default="strict",
+        help=(
+            "Which parsed model output is eligible for actual online control. "
+            "strict requires the full benchmark protocol; directional also requires "
+            "a non-trivial, saturation-aligned control decision; relaxed accepts a "
+            "valid JSON plan without reasoning/SOLUTION tags; relaxed_directional "
+            "adds the directional gate to that parsed plan; repaired additionally "
+            "allows safe schema repair, reordering, integer coercion, and clipping to min/max; "
+            "repaired_directional adds the directional gate after those repairs."
+        ),
+    )
+    parser.add_argument(
+        "--json-stop-after-first",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "For JSON-only prompts, evaluate strict parsing against the first complete "
+            "JSON object/array embedded in the model response. This measures whether "
+            "the decision payload itself is usable when the model repeats or appends text."
+        ),
+    )
+    parser.add_argument(
+        "--directional-control-min-delta-sec",
+        type=float,
+        default=5.0,
+        help=(
+            "Minimum absolute change from default timing required for "
+            "directional_control_usable. This also gates online control when "
+            "--online-control-mode is directional, relaxed_directional, or repaired_directional."
+        ),
+    )
+    parser.add_argument(
+        "--directional-control-saturation-gap",
+        type=float,
+        default=0.05,
+        help=(
+            "Minimum pred_saturation gap used when checking whether higher "
+            "saturation phases receive at least comparable green time."
+        ),
+    )
+    parser.add_argument(
+        "--directional-control-green-tolerance-sec",
+        type=float,
+        default=5.0,
+        help=(
+            "Allowed green-time slack before a higher-saturation phase is counted "
+            "as receiving less green than a lower-saturation phase."
+        ),
+    )
     parser.add_argument("--pred-wait-forecaster", choices=["none", "rolling_mean"], default="none")
     parser.add_argument("--forecaster-history-steps", type=int, default=60)
     parser.add_argument("--forecaster-min-history-steps", type=int, default=5)
@@ -2691,6 +3411,33 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--hf-adapter-path", type=Path, default=None)
     parser.add_argument("--hf-dtype", choices=["auto", "bfloat16", "float16", "float32"], default="auto")
     parser.add_argument("--hf-device-map", default="auto")
+    parser.add_argument(
+        "--hf-use-chat-template",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Render HF prompts with tokenizer.apply_chat_template when the tokenizer provides one.",
+    )
+    parser.add_argument(
+        "--hf-chat-template-enable-thinking",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Pass enable_thinking to tokenizer.apply_chat_template when supported.",
+    )
+    parser.add_argument(
+        "--hf-chat-template-message-mode",
+        choices=["split_system_user", "single_user"],
+        default="split_system_user",
+        help=(
+            "How to map DeepSignal's system/user sentinel into HF chat messages. "
+            "single_user is useful for templates that do not accept a system role."
+        ),
+    )
+    parser.add_argument(
+        "--hf-skip-special-tokens",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip tokenizer special tokens such as <|im_end|> when decoding HF generations.",
+    )
     parser.add_argument("--tripinfo-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument(
         "--tripinfo-drain-seconds",
@@ -2845,11 +3592,31 @@ def main(argv: list[str] | None = None) -> int:
                             "tl_id": tl_id,
                             "model_calls": row["model_calls"],
                             "demand_scale": row["demand_scale"],
+                            "action_delay_cycles": row["action_delay_cycles"],
+                            "plans_queued": row["plans_queued"],
+                            "delayed_plans_applied": row["delayed_plans_applied"],
+                            "pending_plan_left_unapplied": row["pending_plan_left_unapplied"],
                             "plans_applied": row["plans_applied"],
+                            "plans_applied_rate": row["plans_applied_rate"],
                             "fallback_plans_applied": row["fallback_plans_applied"],
+                            "fallback_plan_rate": row["fallback_plan_rate"],
                             "steps_completed": row["steps_completed"],
                             "format_success_rate": row["format_success_rate"],
                             "control_usable_rate": row["control_usable_rate"],
+                            "strict_format_success_rate": row["strict_format_success_rate"],
+                            "strict_control_usable_rate": row["strict_control_usable_rate"],
+                            "directional_control_usable_rate": row["directional_control_usable_rate"],
+                            "relaxed_json_success_rate": row["relaxed_json_success_rate"],
+                            "relaxed_control_usable_rate": row["relaxed_control_usable_rate"],
+                            "relaxed_directional_control_usable_rate": row[
+                                "relaxed_directional_control_usable_rate"
+                            ],
+                            "repaired_control_usable_rate": row["repaired_control_usable_rate"],
+                            "repaired_directional_control_usable_rate": row[
+                                "repaired_directional_control_usable_rate"
+                            ],
+                            "repair_applied_rate": row["repair_applied_rate"],
+                            "online_control_mode": row["online_control_mode"],
                             "avg_queue_vehicles": row["avg_queue_vehicles"],
                             "p95_queue_vehicles": row["p95_queue_vehicles"],
                             "max_queue_vehicles": row["max_queue_vehicles"],
