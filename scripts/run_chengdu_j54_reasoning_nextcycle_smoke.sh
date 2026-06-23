@@ -8,6 +8,7 @@ BENCHMARK_ROOT="${BENCHMARK_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark/DeepSigna
 SUMO_HOME="${SUMO_HOME:-/usr/share/sumo}"
 SCENARIO="${SCENARIO:-sumo_llm}"
 TL_ID="${TL_ID:-J54}"
+PROMPT_FORMAT="${PROMPT_FORMAT:-deepsignal_solution_first}"
 DEMAND_SCALE="${DEMAND_SCALE:-1.2}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
@@ -70,7 +71,7 @@ run_case() {
     --tl-id "$TL_ID" \
     --output-dir "$case_dir" \
     --input-mode github_official \
-    --prompt-format deepsignal \
+    --prompt-format "$PROMPT_FORMAT" \
     --deepsignal-reasoning-max-chars "$REASONING_MAX_CHARS" \
     --no-prefill \
     --online-control-mode "$ONLINE_CONTROL_MODE" \
@@ -133,7 +134,7 @@ run_default_case() {
   log_status "case_complete" "{\"model_key\":\"sumo_default\",\"case_dir\":\"$case_dir\"}"
 }
 
-log_status "smoke_start" "{\"run_root\":\"$RUN_ROOT\",\"tl_id\":\"$TL_ID\",\"prompt_format\":\"deepsignal\",\"online_control_mode\":\"$ONLINE_CONTROL_MODE\",\"action_delay_cycles\":$ACTION_DELAY_CYCLES,\"reasoning_max_chars\":$REASONING_MAX_CHARS,\"run_default\":$RUN_DEFAULT}"
+log_status "smoke_start" "{\"run_root\":\"$RUN_ROOT\",\"tl_id\":\"$TL_ID\",\"prompt_format\":\"$PROMPT_FORMAT\",\"online_control_mode\":\"$ONLINE_CONTROL_MODE\",\"action_delay_cycles\":$ACTION_DELAY_CYCLES,\"reasoning_max_chars\":$REASONING_MAX_CHARS,\"run_default\":$RUN_DEFAULT}"
 
 if [[ "$RUN_DEFAULT" == "1" ]]; then
   run_default_case

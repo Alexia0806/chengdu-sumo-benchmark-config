@@ -934,7 +934,7 @@ def _post_hf_generate(
 def build_hf_chat_messages(prompt: str, args: argparse.Namespace) -> list[dict[str, str]]:
     if args.hf_chat_template_message_mode == "single_user":
         return [{"role": "user", "content": prompt.replace("<|endoftext|>", "\n\n").strip()}]
-    if args.prompt_format in {"deepsignal", "deepsignal_json"} and "<|endoftext|>" in prompt:
+    if args.prompt_format in {"deepsignal", "deepsignal_solution_first", "deepsignal_json"} and "<|endoftext|>" in prompt:
         system_content, user_content = prompt.split("<|endoftext|>", 1)
         return [
             {"role": "system", "content": system_content.strip()},
@@ -995,6 +995,48 @@ def build_deepsignal_prompt(
     if prefill:
         prompt += "</end_working_out>"
     return prompt
+
+
+def build_deepsignal_solution_first_prompt(
+    prediction_input: dict[str, Any],
+    prefill: bool,
+    reasoning_max_chars: int,
+) -> str:
+    if prefill:
+        raise ValueError("deepsignal_solution_first prompt does not support assistant prefill")
+    input_json = json.dumps(prediction_input, indent=2, ensure_ascii=False)
+    eos_token = "<|endoftext|>"
+    system_content = f"""你是交通信号配时优化专家。
+你的首要任务是先输出可执行的最终方案。
+必须先输出 <SOLUTION> JSON，再输出很短的 <start_working_out> 说明。
+推理说明不得超过 {reasoning_max_chars} 个汉字。"""
+    user_content = f"""【cycle_predict_input_json】{input_json}【/cycle_predict_input_json】
+
+任务（必须完成）：
+基于 prediction.phase_waits 的 pred_saturation，在满足全部硬约束前提下，输出下一周期各相位最终绿灯时间 final（单位：秒）。
+
+输入字段说明：
+- prediction.phase_waits[*].default_duration：SUMO 原始固定配时的该相位绿灯时长，单位秒，可作为基准参考。
+- prediction.phase_waits[*].min_green / max_green：绿灯时长上下限，单位秒。
+- prediction.phase_waits[*].pred_wait：预测等待车辆数。
+- prediction.phase_waits[*].pred_saturation：预测饱和度（pred_wait / capacity）。
+- prediction.phase_waits[*].capacity：相位容量，仅供参考。
+
+硬约束（必须满足）：
+1) 相位顺序固定：严格按 prediction.phase_waits 的顺序输出；不可跳相、不可重排。
+2) 每相位约束：final 必须满足 prediction.phase_waits[*].min_green ≤ final ≤ prediction.phase_waits[*].max_green。
+3) final 必须为整数秒。
+4) 必须覆盖 prediction.phase_waits 中所有相位ID，不能缺少或多余。
+
+输出格式（必须严格遵守）：
+1) 第一段必须是 <SOLUTION>...</SOLUTION>。
+2) <SOLUTION> 内只允许最终 JSON，不允许解释、Markdown、代码块或额外字段。
+3) JSON 顶层必须是数组(list)，每个元素必须是 {{"phase_id": <int>, "final": <int>}}。
+4) 第二段必须是 <start_working_out>...</end_working_out>，只写 1-2 个短句说明，不超过 {reasoning_max_chars} 个汉字。
+5) 禁止复述输入 JSON，禁止输出示例，禁止输出第二个方案。
+
+请立即按格式输出。"""
+    return system_content + eos_token + user_content
 
 
 def build_deepsignal_json_prompt(prediction_input: dict[str, Any], prefill: bool) -> str:
@@ -1510,6 +1552,12 @@ def call_model(
             args.prefill,
             args.deepsignal_reasoning_max_chars,
         )
+    elif args.prompt_format == "deepsignal_solution_first":
+        prompt = build_deepsignal_solution_first_prompt(
+            prediction_input,
+            args.prefill,
+            args.deepsignal_reasoning_max_chars,
+        )
     else:
         prompt = build_deepsignal_json_prompt(prediction_input, args.prefill)
 
@@ -1545,7 +1593,7 @@ def call_model(
         raw_text,
         parsed,
         prediction_input["prediction"]["phase_waits"],
-        require_solution_block=args.prompt_format == "deepsignal",
+        require_solution_block=args.prompt_format in {"deepsignal", "deepsignal_solution_first"},
     )
     strict_control_usable = bool(format_ok and control_usable)
     directional_control_usable, directional_violations = (
@@ -3325,9 +3373,10 @@ def validate_runtime_args(args: argparse.Namespace) -> None:
             "--input-mode github_official requires an explicit --pred-wait-forecaster; "
             "use rolling_mean until the official predictor is available"
         )
-    if args.prompt_format not in {"deepsignal", "deepsignal_json"}:
+    if args.prompt_format not in {"deepsignal", "deepsignal_solution_first", "deepsignal_json"}:
         raise ValueError(
-            "--input-mode github_official requires --prompt-format deepsignal or deepsignal_json"
+            "--input-mode github_official requires --prompt-format deepsignal, "
+            "deepsignal_solution_first, or deepsignal_json"
         )
     if args.prefill:
         raise ValueError("--input-mode github_official requires --no-prefill to keep the README prompt intact")
@@ -3357,7 +3406,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--controller", choices=["fixed", "model"], default="fixed")
     parser.add_argument("--input-mode", choices=["legacy_snapshot", "github_official"], default="legacy_snapshot")
     parser.add_argument("--model-backend", choices=["llama", "openai", "hf"], default="llama")
-    parser.add_argument("--prompt-format", choices=["native", "deepsignal", "deepsignal_json"], default="native")
+    parser.add_argument(
+        "--prompt-format",
+        choices=["native", "deepsignal", "deepsignal_solution_first", "deepsignal_json"],
+        default="native",
+    )
     parser.add_argument(
         "--deepsignal-reasoning-max-chars",
         type=int,
