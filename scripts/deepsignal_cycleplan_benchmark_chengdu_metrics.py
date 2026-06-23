@@ -1173,9 +1173,9 @@ def recover_phase_final_solution_from_text(
     expected = [str(item["phase_id"]) for item in phase_waits]
     found: dict[str, int] = {}
     pair_pattern = re.compile(
-        r"phase_id[\"'`\\s]*[:=：]\\s*[\"'`]?(-?\\d+)[\"'`]?"
+        r"phase_id[\"'`\s]*[:=：]\s*[\"'`]?(-?\d+)[\"'`]?"
         r".{0,160}?"
-        r"final[\"'`\\s]*[:=：]\\s*[\"'`]?(-?\\d+)[\"'`]?",
+        r"final[\"'`\s]*[:=：]\s*[\"'`]?(-?\d+)[\"'`]?",
         re.IGNORECASE | re.DOTALL,
     )
     for phase_id, final in pair_pattern.findall(text):
