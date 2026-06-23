@@ -21,12 +21,21 @@ REASONING_MAX_CHARS="${REASONING_MAX_CHARS:-160}"
 HF_DTYPE="${HF_DTYPE:-bfloat16}"
 HF_DEVICE_MAP="${HF_DEVICE_MAP:-auto}"
 USE_CHAT_TEMPLATE="${USE_CHAT_TEMPLATE:-0}"
+HF_CHAT_TEMPLATE_MESSAGE_MODE="${HF_CHAT_TEMPLATE_MESSAGE_MODE:-single_user}"
+HF_CHAT_TEMPLATE_ENABLE_THINKING="${HF_CHAT_TEMPLATE_ENABLE_THINKING:-0}"
 RUN_DEFAULT="${RUN_DEFAULT:-1}"
 WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
 METRIC_SECONDS="${METRIC_SECONDS:-1200}"
 DECISION_INTERVAL_SECONDS="${DECISION_INTERVAL_SECONDS:-60}"
 TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
 ALLOW_NONSTANDARD_WINDOW="${ALLOW_NONSTANDARD_WINDOW:-0}"
+MODEL_SPECS="${MODEL_SPECS:-}"
+
+if [[ -z "$MODEL_SPECS" ]]; then
+  MODEL_SPECS="$(printf 'qwen3_4b_base|/root/autodl-tmp/models/Qwen3-4B|%s|%s|%s\nqwen35_9b_base|/root/autodl-tmp/models/Qwen3.5-9B-Base|%s|%s|%s' \
+    "$USE_CHAT_TEMPLATE" "$HF_CHAT_TEMPLATE_MESSAGE_MODE" "$HF_CHAT_TEMPLATE_ENABLE_THINKING" \
+    "$USE_CHAT_TEMPLATE" "$HF_CHAT_TEMPLATE_MESSAGE_MODE" "$HF_CHAT_TEMPLATE_ENABLE_THINKING")"
+fi
 
 mkdir -p "$RUN_ROOT/logs"
 STATUS_JSONL="$RUN_ROOT/logs/status.jsonl"
@@ -61,18 +70,26 @@ PY
 run_case() {
   local model_key="$1"
   local model_path="$2"
+  local model_use_chat_template="${3:-$USE_CHAT_TEMPLATE}"
+  local model_message_mode="${4:-$HF_CHAT_TEMPLATE_MESSAGE_MODE}"
+  local model_enable_thinking="${5:-$HF_CHAT_TEMPLATE_ENABLE_THINKING}"
   local case_dir="$RUN_ROOT/${model_key}_reasoning_nextcycle_${TL_ID}_temp${TEMPERATURE/./}_x${DEMAND_SCALE/./p}"
   local console_log="$RUN_ROOT/logs/${model_key}.console.log"
   local -a chat_template_args=()
   local -a window_args=()
-  if [[ "$USE_CHAT_TEMPLATE" == "1" ]]; then
-    chat_template_args=(--hf-use-chat-template --hf-chat-template-message-mode single_user --hf-chat-template-enable-thinking)
+  if [[ "$model_use_chat_template" == "1" ]]; then
+    chat_template_args=(--hf-use-chat-template --hf-chat-template-message-mode "$model_message_mode")
+    if [[ "$model_enable_thinking" == "1" ]]; then
+      chat_template_args+=(--hf-chat-template-enable-thinking)
+    else
+      chat_template_args+=(--no-hf-chat-template-enable-thinking)
+    fi
   fi
   if [[ "$ALLOW_NONSTANDARD_WINDOW" == "1" ]]; then
     window_args=(--allow-nonstandard-window)
   fi
 
-  log_status "case_start" "{\"model_key\":\"$model_key\",\"model_path\":\"$model_path\",\"case_dir\":\"$case_dir\"}"
+  log_status "case_start" "{\"model_key\":\"$model_key\",\"model_path\":\"$model_path\",\"case_dir\":\"$case_dir\",\"use_chat_template\":$model_use_chat_template,\"hf_chat_template_message_mode\":\"$model_message_mode\",\"hf_chat_template_enable_thinking\":$model_enable_thinking}"
   "$PYTHON_BIN" "$SCRIPT" \
     --benchmark-root "$BENCHMARK_ROOT" \
     --sumo-home "$SUMO_HOME" \
@@ -154,8 +171,15 @@ log_status "smoke_start" "{\"run_root\":\"$RUN_ROOT\",\"tl_id\":\"$TL_ID\",\"pro
 if [[ "$RUN_DEFAULT" == "1" ]]; then
   run_default_case
 fi
-run_case "qwen3_4b_base" "/root/autodl-tmp/models/Qwen3-4B"
-run_case "qwen35_9b_base" "/root/autodl-tmp/models/Qwen3.5-9B-Base"
+while IFS='|' read -r model_key model_path model_use_chat_template model_message_mode model_enable_thinking; do
+  if [[ -z "${model_key// }" ]] || [[ "$model_key" == \#* ]]; then
+    continue
+  fi
+  model_use_chat_template="${model_use_chat_template:-$USE_CHAT_TEMPLATE}"
+  model_message_mode="${model_message_mode:-$HF_CHAT_TEMPLATE_MESSAGE_MODE}"
+  model_enable_thinking="${model_enable_thinking:-$HF_CHAT_TEMPLATE_ENABLE_THINKING}"
+  run_case "$model_key" "$model_path" "$model_use_chat_template" "$model_message_mode" "$model_enable_thinking"
+done <<< "$MODEL_SPECS"
 
 "$PYTHON_BIN" - "$RUN_ROOT" <<'PY'
 import json, pathlib, statistics, sys
