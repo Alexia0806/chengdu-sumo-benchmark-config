@@ -3385,10 +3385,14 @@ def validate_runtime_args(args: argparse.Namespace) -> None:
             "--input-mode github_official with --model-backend openai requires "
             "--no-openai-json-system-prompt"
         )
-    if args.warmup_seconds != 300 or args.metric_seconds != 1200:
+    if (
+        not args.allow_nonstandard_window
+        and (args.warmup_seconds != 300 or args.metric_seconds != 1200)
+    ):
         raise ValueError(
             "--input-mode github_official requires README window: "
-            "--warmup-seconds 300 --metric-seconds 1200"
+            "--warmup-seconds 300 --metric-seconds 1200; use "
+            "--allow-nonstandard-window only for smoke/control-rate tuning"
         )
 
 
@@ -3428,6 +3432,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--warmup-seconds", type=int, default=300)
     parser.add_argument("--metric-seconds", type=int, default=1200)
+    parser.add_argument(
+        "--allow-nonstandard-window",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Allow warmup/metric windows other than the README benchmark window. "
+            "Use only for smoke tests that tune prompt/parser control rate; full "
+            "benchmark matrices should keep this disabled."
+        ),
+    )
     parser.add_argument("--simulation-seconds", type=int, default=None)
     parser.add_argument("--decision-interval-seconds", type=int, default=60)
     parser.add_argument(

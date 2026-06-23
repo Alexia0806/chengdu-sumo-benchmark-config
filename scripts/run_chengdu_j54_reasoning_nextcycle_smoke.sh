@@ -26,6 +26,7 @@ WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
 METRIC_SECONDS="${METRIC_SECONDS:-1200}"
 DECISION_INTERVAL_SECONDS="${DECISION_INTERVAL_SECONDS:-60}"
 TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
+ALLOW_NONSTANDARD_WINDOW="${ALLOW_NONSTANDARD_WINDOW:-0}"
 
 mkdir -p "$RUN_ROOT/logs"
 STATUS_JSONL="$RUN_ROOT/logs/status.jsonl"
@@ -63,8 +64,12 @@ run_case() {
   local case_dir="$RUN_ROOT/${model_key}_reasoning_nextcycle_${TL_ID}_temp${TEMPERATURE/./}_x${DEMAND_SCALE/./p}"
   local console_log="$RUN_ROOT/logs/${model_key}.console.log"
   local -a chat_template_args=()
+  local -a window_args=()
   if [[ "$USE_CHAT_TEMPLATE" == "1" ]]; then
     chat_template_args=(--hf-use-chat-template --hf-chat-template-message-mode single_user --hf-chat-template-enable-thinking)
+  fi
+  if [[ "$ALLOW_NONSTANDARD_WINDOW" == "1" ]]; then
+    window_args=(--allow-nonstandard-window)
   fi
 
   log_status "case_start" "{\"model_key\":\"$model_key\",\"model_path\":\"$model_path\",\"case_dir\":\"$case_dir\"}"
@@ -82,6 +87,7 @@ run_case() {
     --action-delay-cycles "$ACTION_DELAY_CYCLES" \
     --warmup-seconds "$WARMUP_SECONDS" \
     --metric-seconds "$METRIC_SECONDS" \
+    "${window_args[@]}" \
     --decision-interval-seconds "$DECISION_INTERVAL_SECONDS" \
     --min-green 10 \
     --max-green 90 \
@@ -112,6 +118,10 @@ run_case() {
 run_default_case() {
   local case_dir="$RUN_ROOT/sumo_default_${TL_ID}_x${DEMAND_SCALE/./p}"
   local console_log="$RUN_ROOT/logs/sumo_default.console.log"
+  local -a window_args=()
+  if [[ "$ALLOW_NONSTANDARD_WINDOW" == "1" ]]; then
+    window_args=(--allow-nonstandard-window)
+  fi
 
   log_status "case_start" "{\"model_key\":\"sumo_default\",\"case_dir\":\"$case_dir\"}"
   "$PYTHON_BIN" "$SCRIPT" \
@@ -122,6 +132,7 @@ run_default_case() {
     --output-dir "$case_dir" \
     --warmup-seconds "$WARMUP_SECONDS" \
     --metric-seconds "$METRIC_SECONDS" \
+    "${window_args[@]}" \
     --min-green 10 \
     --max-green 90 \
     --phase-queue-mode split-overlap \
@@ -138,7 +149,7 @@ run_default_case() {
   log_status "case_complete" "{\"model_key\":\"sumo_default\",\"case_dir\":\"$case_dir\"}"
 }
 
-log_status "smoke_start" "{\"run_root\":\"$RUN_ROOT\",\"tl_id\":\"$TL_ID\",\"prompt_format\":\"$PROMPT_FORMAT\",\"online_control_mode\":\"$ONLINE_CONTROL_MODE\",\"action_delay_cycles\":$ACTION_DELAY_CYCLES,\"reasoning_max_chars\":$REASONING_MAX_CHARS,\"run_default\":$RUN_DEFAULT,\"warmup_seconds\":$WARMUP_SECONDS,\"metric_seconds\":$METRIC_SECONDS,\"decision_interval_seconds\":$DECISION_INTERVAL_SECONDS,\"tripinfo_drain_seconds\":$TRIPINFO_DRAIN_SECONDS}"
+log_status "smoke_start" "{\"run_root\":\"$RUN_ROOT\",\"tl_id\":\"$TL_ID\",\"prompt_format\":\"$PROMPT_FORMAT\",\"online_control_mode\":\"$ONLINE_CONTROL_MODE\",\"action_delay_cycles\":$ACTION_DELAY_CYCLES,\"reasoning_max_chars\":$REASONING_MAX_CHARS,\"run_default\":$RUN_DEFAULT,\"warmup_seconds\":$WARMUP_SECONDS,\"metric_seconds\":$METRIC_SECONDS,\"decision_interval_seconds\":$DECISION_INTERVAL_SECONDS,\"tripinfo_drain_seconds\":$TRIPINFO_DRAIN_SECONDS,\"allow_nonstandard_window\":$ALLOW_NONSTANDARD_WINDOW}"
 
 if [[ "$RUN_DEFAULT" == "1" ]]; then
   run_default_case
