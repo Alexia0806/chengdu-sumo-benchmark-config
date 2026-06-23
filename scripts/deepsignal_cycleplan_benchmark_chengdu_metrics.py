@@ -15,6 +15,7 @@ import gzip
 import json
 import math
 import os
+import re
 import signal
 import shutil
 import socket
@@ -1079,6 +1080,109 @@ def extract_solution_json_relaxed(text: str) -> tuple[Any | None, str | None]:
     return None, "json_not_found"
 
 
+def iter_relaxed_json_payloads(text: str) -> tuple[list[Any], list[str]]:
+    """Return every complete JSON payload embedded in priority order."""
+    stripped = text.strip()
+    candidates: list[str] = []
+    if "<SOLUTION>" in stripped:
+        start = stripped.rfind("<SOLUTION>") + len("<SOLUTION>")
+        end = stripped.rfind("</SOLUTION>")
+        candidates.append(stripped[start:end].strip() if end > start else stripped[start:].strip())
+    candidates.append(stripped)
+
+    decoder = json.JSONDecoder()
+    payloads: list[Any] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        for idx, char in enumerate(candidate):
+            if char not in "[{":
+                continue
+            try:
+                parsed, _ = decoder.raw_decode(candidate[idx:])
+            except json.JSONDecodeError as exc:
+                errors.append(f"json_decode@{idx}: {exc}")
+                continue
+            try:
+                marker = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                marker = repr(parsed)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            payloads.append(parsed)
+    return payloads, errors
+
+
+def recover_phase_final_solution_from_text(
+    text: str,
+    phase_waits: list[dict[str, Any]],
+) -> tuple[dict[str, int] | None, list[str]]:
+    """Recover labeled phase_id/final pairs from prose when JSON is truncated.
+
+    This is intentionally conservative: it only accepts explicit phase_id plus
+    final labels and still relies on validate_plan before online use.
+    """
+    expected = [str(item["phase_id"]) for item in phase_waits]
+    found: dict[str, int] = {}
+    pair_pattern = re.compile(
+        r"phase_id[\"'`\\s]*[:=：]\\s*[\"'`]?(-?\\d+)[\"'`]?"
+        r".{0,160}?"
+        r"final[\"'`\\s]*[:=：]\\s*[\"'`]?(-?\\d+)[\"'`]?",
+        re.IGNORECASE | re.DOTALL,
+    )
+    for phase_id, final in pair_pattern.findall(text):
+        found[str(int(phase_id))] = int(final)
+    if set(found) == set(expected):
+        return {phase_id: found[phase_id] for phase_id in expected}, ["recover_phase_final_pairs"]
+    return None, []
+
+
+def extract_relaxed_control_solution(
+    text: str,
+    phase_waits: list[dict[str, Any]],
+) -> tuple[Any | None, dict[str, int] | None, str | None, list[str]]:
+    payloads, json_errors = iter_relaxed_json_payloads(text)
+    first_payload: Any | None = None
+    first_solution: dict[str, int] | None = None
+    first_error: str | None = None
+    first_actions: list[str] = []
+    candidate_errors: list[str] = []
+
+    for idx, parsed in enumerate(payloads):
+        solution, normalize_error, actions = normalize_solution_relaxed(parsed)
+        if first_payload is None:
+            first_payload = parsed
+            first_solution = solution
+            first_error = normalize_error
+            first_actions = actions
+        if normalize_error is not None or solution is None:
+            candidate_errors.append(f"candidate_{idx}_{normalize_error or 'no_solution'}")
+            continue
+        valid, violations = validate_plan(phase_waits, solution)
+        if valid and not violations:
+            return parsed, solution, None, sorted(set(actions + [f"selected_json_candidate_{idx}"]))
+        candidate_errors.append(f"candidate_{idx}_{','.join(violations) or 'not_control_usable'}")
+
+    recovered, recovery_actions = recover_phase_final_solution_from_text(text, phase_waits)
+    if recovered is not None:
+        valid, violations = validate_plan(phase_waits, recovered)
+        if valid and not violations:
+            return recovered, recovered, None, recovery_actions
+        candidate_errors.append(f"recovered_{','.join(violations) or 'not_control_usable'}")
+
+    if first_payload is not None:
+        return (
+            first_payload,
+            first_solution,
+            first_error or (candidate_errors[0] if candidate_errors else None),
+            first_actions,
+        )
+    if json_errors:
+        return None, None, json_errors[0], []
+    return None, None, "json_not_found", []
+
+
 def first_complete_json_text(text: str) -> str | None:
     """Return only the first complete JSON object/array embedded in text."""
     decoder = json.JSONDecoder()
@@ -1445,14 +1549,10 @@ def call_model(
         else (False, violations or ["not_strict_control_usable"])
     )
 
-    relaxed_parsed, relaxed_parse_error = extract_solution_json_relaxed(raw_text)
-    relaxed_solution, relaxed_normalize_error, relaxed_actions = (
-        normalize_solution_relaxed(relaxed_parsed)
-        if relaxed_parse_error is None
-        else (None, None, [])
+    relaxed_parsed, relaxed_solution, relaxed_parse_error, relaxed_actions = extract_relaxed_control_solution(
+        raw_text,
+        prediction_input["prediction"]["phase_waits"],
     )
-    if relaxed_normalize_error is not None:
-        relaxed_parse_error = relaxed_normalize_error
     relaxed_json_success = relaxed_parse_error is None and relaxed_solution is not None
     relaxed_control_usable_raw, relaxed_violations = validate_plan(
         prediction_input["prediction"]["phase_waits"],
