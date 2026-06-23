@@ -16,6 +16,7 @@ N_PREDICT="${N_PREDICT:-1024}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-1200}"
 ONLINE_CONTROL_MODE="${ONLINE_CONTROL_MODE:-repaired}"
 ACTION_DELAY_CYCLES="${ACTION_DELAY_CYCLES:-1}"
+REASONING_MAX_CHARS="${REASONING_MAX_CHARS:-160}"
 HF_DTYPE="${HF_DTYPE:-bfloat16}"
 HF_DEVICE_MAP="${HF_DEVICE_MAP:-auto}"
 USE_CHAT_TEMPLATE="${USE_CHAT_TEMPLATE:-0}"
@@ -70,6 +71,7 @@ run_case() {
     --output-dir "$case_dir" \
     --input-mode github_official \
     --prompt-format deepsignal \
+    --deepsignal-reasoning-max-chars "$REASONING_MAX_CHARS" \
     --no-prefill \
     --online-control-mode "$ONLINE_CONTROL_MODE" \
     --action-delay-cycles "$ACTION_DELAY_CYCLES" \
@@ -131,7 +133,7 @@ run_default_case() {
   log_status "case_complete" "{\"model_key\":\"sumo_default\",\"case_dir\":\"$case_dir\"}"
 }
 
-log_status "smoke_start" "{\"run_root\":\"$RUN_ROOT\",\"tl_id\":\"$TL_ID\",\"prompt_format\":\"deepsignal\",\"online_control_mode\":\"$ONLINE_CONTROL_MODE\",\"action_delay_cycles\":$ACTION_DELAY_CYCLES,\"run_default\":$RUN_DEFAULT}"
+log_status "smoke_start" "{\"run_root\":\"$RUN_ROOT\",\"tl_id\":\"$TL_ID\",\"prompt_format\":\"deepsignal\",\"online_control_mode\":\"$ONLINE_CONTROL_MODE\",\"action_delay_cycles\":$ACTION_DELAY_CYCLES,\"reasoning_max_chars\":$REASONING_MAX_CHARS,\"run_default\":$RUN_DEFAULT}"
 
 if [[ "$RUN_DEFAULT" == "1" ]]; then
   run_default_case

@@ -952,13 +952,17 @@ def build_native_prompt(prediction_input: dict[str, Any], prefill: bool) -> str:
     return prompt
 
 
-def build_deepsignal_prompt(prediction_input: dict[str, Any], prefill: bool) -> str:
+def build_deepsignal_prompt(
+    prediction_input: dict[str, Any],
+    prefill: bool,
+    reasoning_max_chars: int,
+) -> str:
     input_json = json.dumps(prediction_input, indent=2, ensure_ascii=False)
     eos_token = "<|endoftext|>"
-    system_content = """你是交通信号配时优化专家。
-请认真分析问题并给出你的推理过程。
+    system_content = f"""你是交通信号配时优化专家。
+请认真分析问题并给出极简推理过程，推理过程必须不超过 {reasoning_max_chars} 个汉字。
 将推理过程放在 <start_working_out> 和 </end_working_out> 之间。
-然后，将你的最终方案放在 <SOLUTION> 和 </SOLUTION> 之间。"""
+然后，将你的最终方案放在 <SOLUTION> 和 </SOLUTION> 之间。优先保证完整输出 <SOLUTION>。"""
     user_content = f"""【cycle_predict_input_json】{input_json}【/cycle_predict_input_json】
 
 任务（必须完成）：
@@ -981,11 +985,12 @@ def build_deepsignal_prompt(prediction_input: dict[str, Any], prefill: bool) -> 
 - 当总需求压力不高时，避免无意义地整体拉长周期；可参考 default_duration 进行缩短或小幅调整。
 
 输出要求（必须严格遵守）：
-1) 必须先输出 <start_working_out>...</end_working_out>，其中只写思考分析过程，不要输出最终 JSON。
+1) 必须先输出 <start_working_out>...</end_working_out>，其中只写 1-3 个极短判断句，总长度不超过 {reasoning_max_chars} 个汉字；不要复述输入，不要展开公式，不要输出最终 JSON。
 2) 随后输出 <SOLUTION>...</SOLUTION>；<SOLUTION> 内只允许最终 JSON，不允许其它文本。
 3) JSON 顶层必须是数组(list)，每个元素必须是 {{"phase_id": <int>, "final": <int>}}。
 4) 必须覆盖 prediction.phase_waits 中所有相位ID，不能缺少或多余，不能输出额外字段。
-5) 除 <start_working_out>...</end_working_out> 与 <SOLUTION>...</SOLUTION> 外，不允许输出任何其它文本。"""
+5) 禁止输出 Markdown、代码块、示例、重复题目或重复输入 JSON。
+6) 除 <start_working_out>...</end_working_out> 与 <SOLUTION>...</SOLUTION> 外，不允许输出任何其它文本。"""
     prompt = system_content + eos_token + user_content
     if prefill:
         prompt += "</end_working_out>"
@@ -1500,7 +1505,11 @@ def call_model(
     if args.prompt_format == "native":
         prompt = build_native_prompt(prediction_input, args.prefill)
     elif args.prompt_format == "deepsignal":
-        prompt = build_deepsignal_prompt(prediction_input, args.prefill)
+        prompt = build_deepsignal_prompt(
+            prediction_input,
+            args.prefill,
+            args.deepsignal_reasoning_max_chars,
+        )
     else:
         prompt = build_deepsignal_json_prompt(prediction_input, args.prefill)
 
@@ -3349,6 +3358,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--input-mode", choices=["legacy_snapshot", "github_official"], default="legacy_snapshot")
     parser.add_argument("--model-backend", choices=["llama", "openai", "hf"], default="llama")
     parser.add_argument("--prompt-format", choices=["native", "deepsignal", "deepsignal_json"], default="native")
+    parser.add_argument(
+        "--deepsignal-reasoning-max-chars",
+        type=int,
+        default=160,
+        help=(
+            "Maximum Chinese characters requested inside <start_working_out> "
+            "for prompt-format=deepsignal. Keep this small for base models so "
+            "the final <SOLUTION> is emitted reliably."
+        ),
+    )
     parser.add_argument("--prefill", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--gguf-path", type=Path, default=DEFAULT_GGUF)
     parser.add_argument("--llama-server", type=Path, default=Path("/opt/homebrew/bin/llama-server"))
