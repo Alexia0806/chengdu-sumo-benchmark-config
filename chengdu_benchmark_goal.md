@@ -112,6 +112,15 @@ Completed Gemma12B comparison after server resumed:
 - Both Gemma variants output the same executable default-style plan `{0:80, 1:70, 2:40, 3:40}` in all sampled calls
 - Interpretation: thinking did not show a response-time penalty and improved strict-format rate in this tiny sample, but it did not produce a different traffic-control policy; use `hf_chat_template_enable_thinking=1` for Gemma if strict format rate is prioritized, and keep relaxed/repaired metrics separate in all reports
 
+Completed Gemma12B no-chat-template smoke:
+
+- No-chat run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_gemma12_solution_first_nochat_smoke_20260624`
+- No-chat config: `use_chat_template=0`, `warmup_seconds=60`, `metric_seconds=120`, `tripinfo_drain_seconds=60`
+- No-chat result: 3 calls, strict control `100.0%`, relaxed control `100.0%`, repaired control `100.0%`, plan application `66.7%`, average response `78.9s`, failures `0`
+- No-chat output format was cleaner than both chat-template variants: it emitted `<SOLUTION>...</SOLUTION>` without Markdown fences in all sampled calls
+- All sampled Gemma12B variants still output the same default-style plan `{0:80, 1:70, 2:40, 3:40}`; this proves control usability, not traffic-policy superiority
+- Current recommendation for Gemma12B control-rate experiments: prefer `use_chat_template=0` with `deepsignal_solution_first`; keep chat-template thinking as a fallback only if later non-default traffic states show worse behavior
+
 ## Success Criteria For This Stage
 
 This smoke stage is complete when:
