@@ -121,6 +121,16 @@ Completed Gemma12B no-chat-template smoke:
 - All sampled Gemma12B variants still output the same default-style plan `{0:80, 1:70, 2:40, 3:40}`; this proves control usability, not traffic-policy superiority
 - Current recommendation for Gemma12B control-rate experiments: prefer `use_chat_template=0` with `deepsignal_solution_first`; keep chat-template thinking as a fallback only if later non-default traffic states show worse behavior
 
+Completed Qwen no-chat prompt-thinking smoke:
+
+- Run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_qwen_nochat_prompt_thinking_smoke_20260624`
+- Config: `use_chat_template=0`, `prompt_format=deepsignal`, `hf_chat_template_enable_thinking=1` recorded as an experiment label only because the native HF thinking flag is not applied when chat template is disabled
+- Window: `warmup_seconds=60`, `metric_seconds=120`, `tripinfo_drain_seconds=60`
+- `qwen3_4b_base_nochat_prompt_thinking`: 3 calls, strict control `0.0%`, relaxed control `100.0%`, repaired control `100.0%`, plan application `66.7%`, average response `41.3s`, failures `0`
+- `qwen35_9b_base_nochat_prompt_thinking`: 3 calls, strict control `100.0%`, relaxed control `100.0%`, repaired control `100.0%`, plan application `66.7%`, average response `4.2s`, failures `0`
+- Interpretation: prompt-level thinking helped 9B a lot on both strict format and latency, but made 4B verbose and strict-format unstable; 4B still remained usable under relaxed/repaired parsing
+- Current recommendation for Qwen: use `deepsignal` no-chat prompt-thinking for 9B; use `deepsignal_solution_first` no-chat for 4B unless the goal is specifically to elicit non-default exploratory plans and accept relaxed/repaired parsing
+
 ## Success Criteria For This Stage
 
 This smoke stage is complete when:
