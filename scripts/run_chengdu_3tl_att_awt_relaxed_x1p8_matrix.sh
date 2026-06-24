@@ -25,10 +25,16 @@ HF_DTYPE="${HF_DTYPE:-bfloat16}"
 HF_DEVICE_MAP="${HF_DEVICE_MAP:-auto}"
 PARALLEL_QWEN="${PARALLEL_QWEN:-1}"
 RETRY_FAILED_SEQUENTIAL="${RETRY_FAILED_SEQUENTIAL:-1}"
+RUN_DEFAULT="${RUN_DEFAULT:-1}"
+RUN_QWEN4B="${RUN_QWEN4B:-1}"
+RUN_QWEN9B="${RUN_QWEN9B:-1}"
+RUN_GEMMA12B="${RUN_GEMMA12B:-1}"
+RUN_PHI4="${RUN_PHI4:-0}"
 
 QWEN4B_PROMPT_FORMAT="${QWEN4B_PROMPT_FORMAT:-deepsignal}"
 QWEN9B_PROMPT_FORMAT="${QWEN9B_PROMPT_FORMAT:-deepsignal}"
 GEMMA12B_PROMPT_FORMAT="${GEMMA12B_PROMPT_FORMAT:-deepsignal}"
+PHI4_PROMPT_FORMAT="${PHI4_PROMPT_FORMAT:-deepsignal}"
 TLS_FILE="$RUN_ROOT/chengdu_3tl_tls.csv"
 LOG_DIR="$RUN_ROOT/logs"
 ORCH_LOG="$LOG_DIR/orchestrator.log"
@@ -134,14 +140,16 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
     "SUMO default",
     "Qwen3 4B base no-chat thinking",
     "Qwen3.5 9B base no-chat thinking",
-    "Gemma 3 12B it no-chat thinking"
+    "Gemma 3 12B it no-chat thinking",
+    "Phi-4 no-chat thinking"
   ],
   "prompt_policy": {
     "base_models_chat_template": false,
     "base_prompt_formats": {
       "qwen3_4b_base": "$QWEN4B_PROMPT_FORMAT",
       "qwen35_9b_base": "$QWEN9B_PROMPT_FORMAT",
-      "gemma3_12b_it": "$GEMMA12B_PROMPT_FORMAT"
+      "gemma3_12b_it": "$GEMMA12B_PROMPT_FORMAT",
+      "phi4": "$PHI4_PROMPT_FORMAT"
     },
     "reasoning_max_chars": $DEEPSIGNAL_REASONING_MAX_CHARS,
     "base_lenient_json_extraction": true,
@@ -182,7 +190,7 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
 JSON
 
 log_event "RUN_START run_root=$RUN_ROOT online_control_mode=$ONLINE_CONTROL_MODE"
-log_event "MATRIX tls=$TARGET_TLS scales=$DEMAND_SCALES temps=$TEMPERATURES models=qwen3_4b_base,qwen35_9b_base,gemma3_12b_it chat_template=0 queue_thresholds=10,20,30,40"
+log_event "MATRIX tls=$TARGET_TLS scales=$DEMAND_SCALES temps=$TEMPERATURES run_default=$RUN_DEFAULT run_qwen4b=$RUN_QWEN4B run_qwen9b=$RUN_QWEN9B run_gemma12b=$RUN_GEMMA12B run_phi4=$RUN_PHI4 chat_template=0 queue_thresholds=10,20,30,40"
 
 run_default_group() {
   for scale in $DEMAND_SCALES; do
@@ -249,25 +257,63 @@ run_gemma12b_group() {
     "$GEMMA12B_PROMPT_FORMAT"
 }
 
-run_default_group
+run_phi4_group() {
+  run_hf_model_group \
+    "phi4" \
+    "06_phi4_nochat" \
+    "/root/autodl-tmp/models/phi-4" \
+    "$PHI4_PROMPT_FORMAT"
+}
+
+if [[ "$RUN_DEFAULT" == "1" ]]; then
+  run_default_group
+else
+  log_event "SKIP_GROUP default run_default=$RUN_DEFAULT"
+fi
 
 failed_qwen_groups=()
+if [[ "$RUN_QWEN4B" == "1" || "$RUN_QWEN9B" == "1" ]]; then
 if [[ "$PARALLEL_QWEN" == "1" ]]; then
   log_event "QWEN_PARALLEL_START"
-  (run_qwen4b_group) > "$LOG_DIR/qwen4b.worker.log" 2>&1 &
-  qwen4b_pid=$!
-  echo "$qwen4b_pid" > "$LOG_DIR/qwen4b.worker.pid"
+  qwen4b_pid=""
+  qwen9b_pid=""
+  if [[ "$RUN_QWEN4B" == "1" ]]; then
+    (run_qwen4b_group) > "$LOG_DIR/qwen4b.worker.log" 2>&1 &
+    qwen4b_pid=$!
+    echo "$qwen4b_pid" > "$LOG_DIR/qwen4b.worker.pid"
+  else
+    log_event "SKIP_GROUP qwen4b run_qwen4b=$RUN_QWEN4B"
+  fi
 
-  (run_qwen9b_group) > "$LOG_DIR/qwen9b.worker.log" 2>&1 &
-  qwen9b_pid=$!
-  echo "$qwen9b_pid" > "$LOG_DIR/qwen9b.worker.pid"
+  if [[ "$RUN_QWEN9B" == "1" ]]; then
+    (run_qwen9b_group) > "$LOG_DIR/qwen9b.worker.log" 2>&1 &
+    qwen9b_pid=$!
+    echo "$qwen9b_pid" > "$LOG_DIR/qwen9b.worker.pid"
+  else
+    log_event "SKIP_GROUP qwen9b run_qwen9b=$RUN_QWEN9B"
+  fi
 
-  wait "$qwen4b_pid" || failed_qwen_groups+=("qwen4b")
-  wait "$qwen9b_pid" || failed_qwen_groups+=("qwen9b")
+  if [[ -n "$qwen4b_pid" ]]; then
+    wait "$qwen4b_pid" || failed_qwen_groups+=("qwen4b")
+  fi
+  if [[ -n "$qwen9b_pid" ]]; then
+    wait "$qwen9b_pid" || failed_qwen_groups+=("qwen9b")
+  fi
   log_event "QWEN_PARALLEL_DONE failed_groups=${failed_qwen_groups[*]:-none}"
 else
-  run_qwen4b_group || failed_qwen_groups+=("qwen4b")
-  run_qwen9b_group || failed_qwen_groups+=("qwen9b")
+  if [[ "$RUN_QWEN4B" == "1" ]]; then
+    run_qwen4b_group || failed_qwen_groups+=("qwen4b")
+  else
+    log_event "SKIP_GROUP qwen4b run_qwen4b=$RUN_QWEN4B"
+  fi
+  if [[ "$RUN_QWEN9B" == "1" ]]; then
+    run_qwen9b_group || failed_qwen_groups+=("qwen9b")
+  else
+    log_event "SKIP_GROUP qwen9b run_qwen9b=$RUN_QWEN9B"
+  fi
+fi
+else
+  log_event "SKIP_GROUP qwen run_qwen4b=$RUN_QWEN4B run_qwen9b=$RUN_QWEN9B"
 fi
 
 if [[ "${#failed_qwen_groups[@]}" -gt 0 && "$RETRY_FAILED_SEQUENTIAL" == "1" ]]; then
@@ -284,7 +330,17 @@ elif [[ "${#failed_qwen_groups[@]}" -gt 0 ]]; then
   exit 1
 fi
 
-run_gemma12b_group
+if [[ "$RUN_GEMMA12B" == "1" ]]; then
+  run_gemma12b_group
+else
+  log_event "SKIP_GROUP gemma12b run_gemma12b=$RUN_GEMMA12B"
+fi
+
+if [[ "$RUN_PHI4" == "1" ]]; then
+  run_phi4_group
+else
+  log_event "SKIP_GROUP phi4 run_phi4=$RUN_PHI4"
+fi
 
 python3 "$PROJECT_ROOT/scripts/summarize_chengdu_peak_matrix.py" "$RUN_ROOT" | tee "$RUN_ROOT/matrix_summary.md"
 log_event "SUMMARY_WRITTEN $RUN_ROOT/matrix_summary.csv"
