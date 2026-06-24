@@ -3,11 +3,11 @@ set -euo pipefail
 
 PROJECT_ROOT="/root/autodl-tmp/tsc-cycle-benchmark"
 BENCH_ROOT="$PROJECT_ROOT/DeepSignal-benchmark"
-RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_att_awt_relaxed_nochat_thinking_x1p8_$(date +%Y%m%d)}"
+RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_att_awt_relaxed_nochat_thinking_x1p8_no_x1p0_temp0102_$(date +%Y%m%d)}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
 PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
-DEMAND_SCALES="${DEMAND_SCALES:-1.0 1.2 1.5 1.8}"
-TEMPERATURES="${TEMPERATURES:-0.1}"
+DEMAND_SCALES="${DEMAND_SCALES:-1.2 1.5 1.8}"
+TEMPERATURES="${TEMPERATURES:-0.1 0.2}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
 TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
@@ -113,8 +113,8 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
 {
   "run_root": "$RUN_ROOT",
   "tls": ["J54", "314655170", "432452987"],
-  "demand_scales": [1.0, 1.2, 1.5, 1.8],
-  "temperatures": [0.1],
+  "demand_scales": [1.2, 1.5, 1.8],
+  "temperatures": [0.1, 0.2],
   "excluded_model_groups": ["Fine-tuned 9B", "model-fp16-20260519.gguf", "first_min_green"],
   "model_groups": [
     "SUMO default",
