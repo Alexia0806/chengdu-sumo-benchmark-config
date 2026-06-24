@@ -101,6 +101,17 @@ Gemma12B smoke attempted but not completed:
 - No model-call control-rate evidence was retrieved before SSH failed
 - Failure mode: `ssh -p 42904 root@connect.westc.seetacloud.com` returned `Connection refused`; stop remote actions and resume only after checking the run root, PID, logs, and per-case files
 
+Completed Gemma12B comparison after server resumed:
+
+- No-thinking run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_gemma12_solution_first_smoke_20260624`
+- No-thinking config: `hf_chat_template_enable_thinking=0`, `warmup_seconds=60`, `metric_seconds=180`, `tripinfo_drain_seconds=60`
+- No-thinking result: 4 calls, strict control `50.0%`, relaxed control `100.0%`, repaired control `100.0%`, plan application `75.0%`, average response `77.1s`, failures `0`
+- Thinking run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_gemma12_solution_first_thinking_smoke_20260624`
+- Thinking config: `hf_chat_template_enable_thinking=1`, `warmup_seconds=60`, `metric_seconds=120`, `tripinfo_drain_seconds=60`
+- Thinking result: 3 calls, strict control `66.7%`, relaxed control `100.0%`, repaired control `100.0%`, plan application `66.7%`, average response `77.3s`, failures `0`
+- Both Gemma variants output the same executable default-style plan `{0:80, 1:70, 2:40, 3:40}` in all sampled calls
+- Interpretation: thinking did not show a response-time penalty and improved strict-format rate in this tiny sample, but it did not produce a different traffic-control policy; use `hf_chat_template_enable_thinking=1` for Gemma if strict format rate is prioritized, and keep relaxed/repaired metrics separate in all reports
+
 ## Success Criteria For This Stage
 
 This smoke stage is complete when:
