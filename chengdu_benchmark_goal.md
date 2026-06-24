@@ -79,6 +79,28 @@ Expected active cases:
 - `qwen3_4b_base_reasoning_nextcycle_J54_temp01_x1p2`
 - `qwen35_9b_base_reasoning_nextcycle_J54_temp01_x1p2`
 
+## Latest Checkpoint
+
+Timestamp: `2026-06-24 09:04 CST`
+
+Completed Qwen short-window smoke:
+
+- Run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_reasoning_nextcycle_smoke_20260624`
+- Window: `warmup_seconds=60`, `metric_seconds=300`, `tripinfo_drain_seconds=120`, `allow_nonstandard_window=1`
+- Prompt/control: `deepsignal_solution_first`, `temperature=0.1`, `n_predict=2048`, `online_control_mode=repaired`, `action_delay_cycles=1`
+- `qwen3_4b_base`: 6 calls, strict control `33.3%`, relaxed control `100%`, repaired control `100%`, plan application `83.3%`, average response `39.6s`
+- `qwen35_9b_base`: 6 calls, strict control `50.0%`, relaxed control `50.0%`, repaired control `50.0%`, plan application `50.0%`, average response `33.4s`
+
+Gemma12B smoke attempted but not completed:
+
+- Run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_gemma12_solution_first_smoke_20260624`
+- Case: `gemma3_12b_it_reasoning_nextcycle_J54_temp01_x1p2`
+- Model: `/root/autodl-tmp/models/gemma-3-12b-it`
+- Config: `use_chat_template=1`, `hf_chat_template_message_mode=single_user`, `hf_chat_template_enable_thinking=0`, `HF_DTYPE=bfloat16`, `HF_DEVICE_MAP=auto`
+- Last known state: process PID `11976` started and Gemma12B loaded weights successfully; GPU memory reached about `24518 MiB used / 7594 MiB free`, utilization about `69%`
+- No model-call control-rate evidence was retrieved before SSH failed
+- Failure mode: `ssh -p 42904 root@connect.westc.seetacloud.com` returned `Connection refused`; stop remote actions and resume only after checking the run root, PID, logs, and per-case files
+
 ## Success Criteria For This Stage
 
 This smoke stage is complete when:
