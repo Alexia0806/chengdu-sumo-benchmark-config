@@ -1,0 +1,14 @@
+{% if messages[0]['role'] == 'system' and messages[0]['content']|trim %}
+{{ messages[0]['content'] + eos_token }}
+{% set loop_messages = messages[1:] %}
+{% else %}
+{% set loop_messages = messages %}
+{% endif %}
+{% for message in loop_messages %}
+{% if message['role'] == 'user' %}
+{{ message['content'] }}
+{% elif message['role'] == 'assistant' %}
+{{ message['content'] + eos_token }}
+{% endif %}
+{% endfor %}
+{% if add_generation_prompt %}{{ '' }}{% endif %}

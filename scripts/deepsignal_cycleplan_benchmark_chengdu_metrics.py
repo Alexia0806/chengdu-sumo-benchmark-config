@@ -128,18 +128,12 @@ class ModelResult:
     format_ok: bool
     control_usable: bool
     strict_control_usable: bool
-    directional_control_usable: bool
-    directional_violations: list[str]
     relaxed_solution: dict[str, int] | None
     relaxed_json_success: bool
     relaxed_control_usable: bool
-    relaxed_directional_control_usable: bool
-    relaxed_directional_violations: list[str]
     relaxed_parse_error: str | None
     repaired_solution: dict[str, int] | None
     repaired_control_usable: bool
-    repaired_directional_control_usable: bool
-    repaired_directional_violations: list[str]
     repair_actions: list[str]
     repair_error: str | None
     violations: list[str]
@@ -163,8 +157,11 @@ class PhaseForecast:
 class StepMetricSample:
     phase_queues_raw: list[float]
     phase_queues_split_overlap: list[float]
+    lane_queues: dict[str, float]
     incoming_vehicle_count: int
+    incoming_vehicle_ids: list[str]
     passage_count: int
+    passage_vehicle_ids: list[str]
     local_delay_delta_s: float
 
 
@@ -441,6 +438,7 @@ def write_target_peak_route_file(
         net_path = sumocfg.parent / net_path
 
     net_root = ET.parse(net_path).getroot()
+    edge_info = net_edge_info(net_root)
     by_tl: dict[str, list[tuple[str, str]]] = {tl_id: [] for tl_id in tl_ids}
     seen: set[tuple[str, str, str]] = set()
     for conn in net_root.iter("connection"):
@@ -467,10 +465,23 @@ def write_target_peak_route_file(
     )
     vph = float(args.target_peak_vph_per_route) * scale
     total_routes = 0
+    selected_route_audit: dict[str, list[dict[str, Any]]] = {}
     for tl_id in tl_ids:
         pairs = by_tl.get(tl_id) or []
+        pairs = select_target_peak_route_pairs(pairs, edge_info, args)
         if args.target_peak_routes_per_tl > 0:
             pairs = pairs[: args.target_peak_routes_per_tl]
+        selected_route_audit[tl_id] = [
+            {
+                "from": src,
+                "to": dst,
+                "from_length": edge_info.get(src, {}).get("length"),
+                "to_length": edge_info.get(dst, {}).get("length"),
+                "from_lanes": edge_info.get(src, {}).get("lanes"),
+                "to_lanes": edge_info.get(dst, {}).get("lanes"),
+            }
+            for src, dst in pairs
+        ]
         for idx, (src, dst) in enumerate(pairs):
             route_id = f"target_peak_{tl_id}_{idx}"
             ET.SubElement(route_root, "route", {"id": route_id, "edges": f"{src} {dst}"})
@@ -506,9 +517,80 @@ def write_target_peak_route_file(
             "vehs_per_hour_per_route": vph,
             "begin": begin,
             "end": end,
+            "route_selection": args.target_peak_route_selection,
+            "selected_routes": selected_route_audit,
         },
     )
     return out
+
+
+def net_edge_info(net_root: ET.Element) -> dict[str, dict[str, Any]]:
+    info: dict[str, dict[str, Any]] = {}
+    for edge in net_root.iter("edge"):
+        edge_id = edge.attrib.get("id")
+        if not edge_id or edge_id.startswith(":"):
+            continue
+        lanes = list(edge.findall("lane"))
+        lengths: list[float] = []
+        for lane in lanes:
+            try:
+                lengths.append(float(lane.attrib.get("length", "0")))
+            except ValueError:
+                continue
+        info[edge_id] = {
+            "from": edge.attrib.get("from"),
+            "to": edge.attrib.get("to"),
+            "lanes": len(lanes),
+            "length": mean_or_none(lengths) or 0.0,
+        }
+    return info
+
+
+def select_target_peak_route_pairs(
+    pairs: list[tuple[str, str]],
+    edge_info: dict[str, dict[str, Any]],
+    args: argparse.Namespace,
+) -> list[tuple[str, str]]:
+    mode = str(getattr(args, "target_peak_route_selection", "net_order"))
+    if mode == "net_order":
+        return pairs
+
+    min_source_length = float(getattr(args, "target_peak_min_source_length", 0.0) or 0.0)
+    min_dest_length = float(getattr(args, "target_peak_min_dest_length", 0.0) or 0.0)
+
+    def score(pair: tuple[str, str]) -> tuple[float, float, float, str, str]:
+        src, dst = pair
+        src_info = edge_info.get(src, {})
+        dst_info = edge_info.get(dst, {})
+        src_length = float(src_info.get("length") or 0.0)
+        dst_length = float(dst_info.get("length") or 0.0)
+        src_lanes = float(src_info.get("lanes") or 0.0)
+        dst_lanes = float(dst_info.get("lanes") or 0.0)
+        length_ok = float(src_length >= min_source_length) + float(dst_length >= min_dest_length)
+        # Prefer stable source/destination edges but keep the score simple and auditable.
+        route_score = min(src_length, 300.0) + 0.5 * min(dst_length, 300.0) + 20.0 * src_lanes + 10.0 * dst_lanes
+        return (length_ok, route_score, src_lanes + dst_lanes, src, dst)
+
+    scored = sorted(pairs, key=score, reverse=True)
+    if mode == "best_edges":
+        return scored
+    if mode != "diverse_sources":
+        raise ValueError(f"unknown target peak route selection: {mode}")
+
+    selected: list[tuple[str, str]] = []
+    selected_set: set[tuple[str, str]] = set()
+    used_sources: set[str] = set()
+    for pair in scored:
+        src, _dst = pair
+        if src in used_sources:
+            continue
+        selected.append(pair)
+        selected_set.add(pair)
+        used_sources.add(src)
+    for pair in scored:
+        if pair not in selected_set:
+            selected.append(pair)
+    return selected
 
 
 def _scaled_numeric_text(value: str, divisor: float) -> str:
@@ -830,7 +912,7 @@ def _load_hf_stack(args: argparse.Namespace) -> tuple[Any, Any]:
         return cached["tokenizer"], cached["model"]
 
     import torch  # type: ignore
-    from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer  # type: ignore
 
     dtype_map = {
         "auto": "auto",
@@ -841,29 +923,47 @@ def _load_hf_stack(args: argparse.Namespace) -> tuple[Any, Any]:
     torch_dtype = dtype_map[args.hf_dtype]
     tokenizer_path = adapter_path if adapter_path and (adapter_path / "tokenizer.json").exists() else model_path
     tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_path), trust_remote_code=True)
+    config = AutoConfig.from_pretrained(str(model_path), trust_remote_code=True)
     load_kwargs = {
         "trust_remote_code": True,
         "device_map": args.hf_device_map,
         "torch_dtype": torch_dtype,
         "low_cpu_mem_usage": True,
-        "attn_implementation": "sdpa",
+        "attn_implementation": os.environ.get("HF_ATTN_IMPLEMENTATION", "sdpa"),
     }
+    experts_implementation = os.environ.get("HF_EXPERTS_IMPLEMENTATION")
+    if experts_implementation:
+        load_kwargs["experts_implementation"] = experts_implementation
     model_load_errors: list[str] = []
-    try:
-        model = AutoModelForCausalLM.from_pretrained(str(model_path), **load_kwargs)
-    except Exception as exc:
-        model_load_errors.append(f"AutoModelForCausalLM: {type(exc).__name__}: {exc}")
-        model = None
-        for class_name in ("Gemma3ForConditionalGeneration", "AutoModelForImageTextToText"):
-            try:
+    architecture_names = [
+        name
+        for name in (getattr(config, "architectures", None) or [])
+        if isinstance(name, str) and name
+    ]
+    candidate_class_names = [
+        *architecture_names,
+        "AutoModelForCausalLM",
+        "Gemma3ForConditionalGeneration",
+        "AutoModelForImageTextToText",
+    ]
+    seen_class_names: set[str] = set()
+    model = None
+    for class_name in candidate_class_names:
+        if class_name in seen_class_names:
+            continue
+        seen_class_names.add(class_name)
+        try:
+            if class_name == "AutoModelForCausalLM":
+                model_cls = AutoModelForCausalLM
+            else:
                 module = __import__("transformers", fromlist=[class_name])
                 model_cls = getattr(module, class_name)
-                model = model_cls.from_pretrained(str(model_path), **load_kwargs)
-                break
-            except Exception as fallback_exc:
-                model_load_errors.append(f"{class_name}: {type(fallback_exc).__name__}: {fallback_exc}")
-        if model is None:
-            raise RuntimeError("HF model load failed: " + " | ".join(model_load_errors))
+            model = model_cls.from_pretrained(str(model_path), **load_kwargs)
+            break
+        except Exception as exc:
+            model_load_errors.append(f"{class_name}: {type(exc).__name__}: {exc}")
+    if model is None:
+        raise RuntimeError("HF model load failed: " + " | ".join(model_load_errors))
     if adapter_path is not None:
         from peft import PeftModel  # type: ignore
 
@@ -1405,41 +1505,6 @@ def validate_plan(
     return True, violations
 
 
-def validate_directional_control(
-    phase_waits: list[dict[str, Any]],
-    solution: dict[str, int] | None,
-    args: argparse.Namespace,
-) -> tuple[bool, list[str]]:
-    control_usable, base_violations = validate_plan(phase_waits, solution)
-    if not control_usable or base_violations:
-        return False, base_violations or ["not_control_usable"]
-
-    min_delta = float(args.directional_control_min_delta_sec)
-    saturation_gap = float(args.directional_control_saturation_gap)
-    green_tolerance = float(args.directional_control_green_tolerance_sec)
-
-    expected = [str(item["phase_id"]) for item in phase_waits]
-    finals = [int(solution[phase_id]) for phase_id in expected]
-    defaults = [int(item["default_duration"]) for item in phase_waits]
-    saturations = [float(item.get("pred_saturation") or 0.0) for item in phase_waits]
-    violations: list[str] = []
-
-    if max(abs(final - default) for final, default in zip(finals, defaults)) < min_delta:
-        violations.append("no_nontrivial_adjustment")
-
-    for high_idx, high_sat in enumerate(saturations):
-        for low_idx, low_sat in enumerate(saturations):
-            if high_sat <= low_sat + saturation_gap:
-                continue
-            if finals[high_idx] + green_tolerance < finals[low_idx]:
-                violations.append("higher_saturation_less_green")
-                break
-        if "higher_saturation_less_green" in violations:
-            break
-
-    return not violations, violations
-
-
 def strict_format_ok(
     text: str,
     parsed: Any,
@@ -1517,18 +1582,12 @@ def model_result_error(parse_error: str, elapsed_sec: float | None = None) -> Mo
         format_ok=False,
         control_usable=False,
         strict_control_usable=False,
-        directional_control_usable=False,
-        directional_violations=["unparseable"],
         relaxed_solution=None,
         relaxed_json_success=False,
         relaxed_control_usable=False,
-        relaxed_directional_control_usable=False,
-        relaxed_directional_violations=["unparseable"],
         relaxed_parse_error=parse_error,
         repaired_solution=None,
         repaired_control_usable=False,
-        repaired_directional_control_usable=False,
-        repaired_directional_violations=["unparseable"],
         repair_actions=[],
         repair_error=parse_error,
         violations=["unparseable"],
@@ -1596,15 +1655,6 @@ def call_model(
         require_solution_block=args.prompt_format in {"deepsignal", "deepsignal_solution_first"},
     )
     strict_control_usable = bool(format_ok and control_usable)
-    directional_control_usable, directional_violations = (
-        validate_directional_control(
-            prediction_input["prediction"]["phase_waits"],
-            solution,
-            args,
-        )
-        if strict_control_usable
-        else (False, violations or ["not_strict_control_usable"])
-    )
 
     relaxed_parsed, relaxed_solution, relaxed_parse_error, relaxed_actions = extract_relaxed_control_solution(
         raw_text,
@@ -1616,29 +1666,11 @@ def call_model(
         relaxed_solution,
     )
     relaxed_control_usable = bool(relaxed_json_success and relaxed_control_usable_raw and not relaxed_violations)
-    relaxed_directional_control_usable, relaxed_directional_violations = (
-        validate_directional_control(
-            prediction_input["prediction"]["phase_waits"],
-            relaxed_solution,
-            args,
-        )
-        if relaxed_control_usable
-        else (False, relaxed_violations or ["not_relaxed_control_usable"])
-    )
     repaired_solution, repaired_control_usable, repair_actions, repair_error = (
         repair_solution_for_online_control(
             prediction_input["prediction"]["phase_waits"],
             relaxed_solution,
         )
-    )
-    repaired_directional_control_usable, repaired_directional_violations = (
-        validate_directional_control(
-            prediction_input["prediction"]["phase_waits"],
-            repaired_solution,
-            args,
-        )
-        if repaired_control_usable
-        else (False, [repair_error or "not_repaired_control_usable"])
     )
     repair_actions = sorted(set(relaxed_actions + repair_actions))
     return ModelResult(
@@ -1646,18 +1678,12 @@ def call_model(
         format_ok=format_ok,
         control_usable=control_usable,
         strict_control_usable=strict_control_usable,
-        directional_control_usable=directional_control_usable,
-        directional_violations=directional_violations,
         relaxed_solution=relaxed_solution,
         relaxed_json_success=relaxed_json_success,
         relaxed_control_usable=relaxed_control_usable,
-        relaxed_directional_control_usable=relaxed_directional_control_usable,
-        relaxed_directional_violations=relaxed_directional_violations,
         relaxed_parse_error=relaxed_parse_error,
         repaired_solution=repaired_solution,
         repaired_control_usable=repaired_control_usable,
-        repaired_directional_control_usable=repaired_directional_control_usable,
-        repaired_directional_violations=repaired_directional_violations,
         repair_actions=repair_actions,
         repair_error=repair_error,
         violations=violations,
@@ -1879,6 +1905,114 @@ def phase_queue_samples(
     return raw, split_overlap, lane_queues
 
 
+def _safe_lane_halting_number(traci: Any, lane: str) -> float:
+    try:
+        return float(traci.lane.getLastStepHaltingNumber(lane))
+    except Exception:
+        return 0.0
+
+
+def build_max_pressure_cycle_plan(
+    traci: Any,
+    green_phases: list[GreenPhase],
+) -> tuple[dict[str, int], dict[str, Any]]:
+    lane_ids = sorted({lane for phase in green_phases for lane in (phase.lanes_in + phase.lanes_out)})
+    lane_queues = {lane: _safe_lane_halting_number(traci, lane) for lane in lane_ids}
+    default_solution = {
+        str(phase.phase_id): int(min(max(phase.default_duration, phase.min_green), phase.max_green))
+        for phase in green_phases
+    }
+    total_cycle = sum(default_solution.values())
+    min_cycle = sum(int(phase.min_green) for phase in green_phases)
+    max_cycle = sum(int(phase.max_green) for phase in green_phases)
+    target_cycle = int(min(max(total_cycle, min_cycle), max_cycle))
+
+    pressures: list[dict[str, Any]] = []
+    positive_total = 0.0
+    for phase in green_phases:
+        incoming_queue = sum(lane_queues.get(lane, 0.0) for lane in phase.lanes_in)
+        outgoing_queue = sum(lane_queues.get(lane, 0.0) for lane in phase.lanes_out)
+        raw_pressure = incoming_queue - outgoing_queue
+        positive_pressure = max(0.0, raw_pressure)
+        positive_total += positive_pressure
+        pressures.append(
+            {
+                "phase_id": phase.phase_id,
+                "incoming_queue": incoming_queue,
+                "outgoing_queue": outgoing_queue,
+                "raw_pressure": raw_pressure,
+                "positive_pressure": positive_pressure,
+                "default_duration": phase.default_duration,
+                "min_green": phase.min_green,
+                "max_green": phase.max_green,
+                "lanes_in": phase.lanes_in,
+                "lanes_out": phase.lanes_out,
+            }
+        )
+
+    if positive_total <= 0.0:
+        return default_solution, {
+            "controller_algorithm": "max_pressure_cycle_allocator",
+            "allocation_mode": "default_cycle_no_positive_pressure",
+            "lane_queues": lane_queues,
+            "phase_pressures": pressures,
+            "target_cycle_seconds": target_cycle,
+            "allocated_cycle_seconds": sum(default_solution.values()),
+        }
+
+    remaining_cycle = max(0, target_cycle - min_cycle)
+    fractional_rows: list[tuple[float, float, int, GreenPhase]] = []
+    solution: dict[str, int] = {}
+    for phase, pressure in zip(green_phases, pressures):
+        share = remaining_cycle * float(pressure["positive_pressure"]) / positive_total
+        duration_float = phase.min_green + share
+        duration_int = int(math.floor(duration_float))
+        duration_int = int(min(max(duration_int, phase.min_green), phase.max_green))
+        solution[str(phase.phase_id)] = duration_int
+        fractional_rows.append(
+            (
+                duration_float - math.floor(duration_float),
+                float(pressure["positive_pressure"]),
+                phase.phase_id,
+                phase,
+            )
+        )
+
+    seconds_left = target_cycle - sum(solution.values())
+    allocation_order = sorted(fractional_rows, key=lambda item: (item[0], item[1], -item[2]), reverse=True)
+    while seconds_left > 0 and allocation_order:
+        changed = False
+        for _fraction, _pressure, _phase_id, phase in allocation_order:
+            key = str(phase.phase_id)
+            if solution[key] >= phase.max_green:
+                continue
+            solution[key] += 1
+            seconds_left -= 1
+            changed = True
+            if seconds_left <= 0:
+                break
+        if not changed:
+            break
+
+    if seconds_left < 0:
+        for _fraction, _pressure, _phase_id, phase in reversed(allocation_order):
+            key = str(phase.phase_id)
+            while seconds_left < 0 and solution[key] > phase.min_green:
+                solution[key] -= 1
+                seconds_left += 1
+            if seconds_left >= 0:
+                break
+
+    return solution, {
+        "controller_algorithm": "max_pressure_cycle_allocator",
+        "allocation_mode": "positive_pressure_proportional_cycle",
+        "lane_queues": lane_queues,
+        "phase_pressures": pressures,
+        "target_cycle_seconds": target_cycle,
+        "allocated_cycle_seconds": sum(solution.values()),
+    }
+
+
 def collect_step_metrics(
     traci: Any,
     tl_id: str,
@@ -1887,9 +2021,10 @@ def collect_step_metrics(
     last_time_loss: dict[str, float],
 ) -> StepMetricSample:
     del tl_id
-    raw_queues, split_queues, _lane_queues = phase_queue_samples(traci, green_phases)
+    raw_queues, split_queues, lane_queues = phase_queue_samples(traci, green_phases)
     current_incoming = incoming_vehicle_ids(traci, green_phases)
-    passage_count = len(previous_incoming - current_incoming)
+    passage_vehicle_ids = sorted(previous_incoming - current_incoming)
+    passage_count = len(passage_vehicle_ids)
 
     local_delay_delta = 0.0
     for veh_id in current_incoming:
@@ -1908,10 +2043,113 @@ def collect_step_metrics(
     return StepMetricSample(
         phase_queues_raw=raw_queues,
         phase_queues_split_overlap=split_queues,
+        lane_queues=lane_queues,
         incoming_vehicle_count=len(current_incoming),
+        incoming_vehicle_ids=sorted(current_incoming),
         passage_count=passage_count,
+        passage_vehicle_ids=passage_vehicle_ids,
         local_delay_delta_s=local_delay_delta,
     )
+
+
+def write_step_metric_record(
+    fh: Any,
+    traci: Any,
+    *,
+    scenario: str,
+    usage: str,
+    tl_id: str,
+    step: int,
+    sim_time_before_step: int,
+    metric_start: int,
+    metric_end: int,
+    control_total_steps: int,
+    sample: StepMetricSample,
+    step_network_departed_vehicle_ids: set[str],
+    green_phases: list[GreenPhase],
+    queue_thresholds: list[float],
+    args: argparse.Namespace,
+    tripinfo_path: Path | None,
+) -> None:
+    selected_phase_queues = (
+        sample.phase_queues_split_overlap
+        if args.phase_queue_mode == "split-overlap"
+        else sample.phase_queues_raw
+    )
+    step_max_queue = max(selected_phase_queues) if selected_phase_queues else None
+    threshold_flags = {
+        metric_key_float(threshold): bool(step_max_queue is not None and step_max_queue > threshold)
+        for threshold in queue_thresholds
+    }
+    try:
+        current_phase_index = int(traci.trafficlight.getPhase(tl_id))
+    except Exception:
+        current_phase_index = None
+    try:
+        current_program = str(traci.trafficlight.getProgram(tl_id))
+    except Exception:
+        current_program = None
+    try:
+        next_switch = float(traci.trafficlight.getNextSwitch(tl_id))
+    except Exception:
+        next_switch = None
+    try:
+        sim_time_after_step = int(traci.simulation.getTime())
+    except Exception:
+        sim_time_after_step = None
+
+    if step < metric_start:
+        window_phase = "warmup"
+    elif step < metric_end:
+        window_phase = "metric"
+    elif step < control_total_steps:
+        window_phase = "post_metric_control"
+    else:
+        window_phase = "tripinfo_drain"
+
+    payload = {
+        "schema_version": 1,
+        "scenario": scenario,
+        "usage": usage,
+        "tl_id": tl_id,
+        "step": step,
+        "sim_time_before_step": sim_time_before_step,
+        "sim_time_after_step": sim_time_after_step,
+        "window_phase": window_phase,
+        "metric_start_second": metric_start,
+        "metric_end_second": metric_end,
+        "control_total_steps": control_total_steps,
+        "controller": args.controller,
+        "input_mode": args.input_mode,
+        "demand_scale": args.demand_scale,
+        "phase_queue_mode": args.phase_queue_mode,
+        "phase_ids": [phase.phase_id for phase in green_phases],
+        "phase_queues_raw": sample.phase_queues_raw,
+        "phase_queues_split_overlap": sample.phase_queues_split_overlap,
+        "selected_phase_queues": selected_phase_queues,
+        "max_queue_selected": step_max_queue,
+        "sum_queue_selected": float(sum(selected_phase_queues)) if selected_phase_queues else 0.0,
+        "avg_queue_selected": float(mean(selected_phase_queues)) if selected_phase_queues else None,
+        "lane_queues": sample.lane_queues,
+        "incoming_vehicle_count": sample.incoming_vehicle_count,
+        "passage_count": sample.passage_count,
+        "local_delay_delta_s": sample.local_delay_delta_s,
+        "queue_over_threshold": threshold_flags,
+        "network_departed_vehicle_count": len(step_network_departed_vehicle_ids),
+        "traffic_light_phase_index": current_phase_index,
+        "traffic_light_program": current_program,
+        "traffic_light_next_switch": next_switch,
+        "tripinfo_path": str(tripinfo_path) if tripinfo_path else None,
+    }
+    if args.record_step_vehicle_ids:
+        payload.update(
+            {
+                "incoming_vehicle_ids": sample.incoming_vehicle_ids,
+                "passage_vehicle_ids": sample.passage_vehicle_ids,
+                "network_departed_vehicle_ids": sorted(step_network_departed_vehicle_ids),
+            }
+        )
+    write_jsonl_line(fh, payload)
 
 
 def safe_path_token(value: str) -> str:
@@ -1926,6 +2164,26 @@ def tripinfo_output_path(args: argparse.Namespace, scenario: str, tl_id: str) ->
 
 def mean_or_none(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
+
+
+def iter_tripinfo_metrics(tripinfo_path: Path) -> Any:
+    for _event, elem in ET.iterparse(tripinfo_path, events=("end",)):
+        if elem.tag != "tripinfo":
+            elem.clear()
+            continue
+        veh_id = elem.attrib.get("id")
+        if not veh_id:
+            elem.clear()
+            continue
+        try:
+            duration = float(elem.attrib["duration"])
+            waiting_time = float(elem.attrib.get("waitingTime", "0"))
+            time_loss = float(elem.attrib.get("timeLoss", "0"))
+        except (KeyError, TypeError, ValueError):
+            elem.clear()
+            continue
+        yield veh_id, duration, waiting_time, time_loss
+        elem.clear()
 
 
 def parse_tripinfo_att_awt_metrics(
@@ -1948,15 +2206,19 @@ def parse_tripinfo_att_awt_metrics(
         "network_trip_completion_ratio": None,
         "network_travel_time_total_sec": 0.0,
         "network_waiting_time_total_sec": 0.0,
+        "network_travel_time_delay_total_sec": 0.0,
         "network_att_sec": None,
         "network_awt_sec": None,
+        "network_travel_time_delay_sec": None,
         "target_tl_seen_vehicle_count": len(target_tl_seen_vehicle_ids),
         "target_tl_trip_completed_count": 0,
         "target_tl_trip_completion_ratio": None,
         "target_tl_travel_time_total_sec": 0.0,
         "target_tl_waiting_time_total_sec": 0.0,
+        "target_tl_travel_time_delay_total_sec": 0.0,
         "target_tl_att_sec": None,
         "target_tl_awt_sec": None,
+        "target_tl_travel_time_delay_sec": None,
     }
     if tripinfo_path is None:
         return base
@@ -1966,25 +2228,20 @@ def parse_tripinfo_att_awt_metrics(
 
     network_durations: list[float] = []
     network_waits: list[float] = []
+    network_time_losses: list[float] = []
     target_durations: list[float] = []
     target_waits: list[float] = []
+    target_time_losses: list[float] = []
     try:
-        root = ET.parse(tripinfo_path).getroot()
-        for trip in root.iter("tripinfo"):
-            veh_id = trip.attrib.get("id")
-            if not veh_id:
-                continue
-            try:
-                duration = float(trip.attrib["duration"])
-                waiting_time = float(trip.attrib.get("waitingTime", "0"))
-            except (KeyError, TypeError, ValueError):
-                continue
+        for veh_id, duration, waiting_time, time_loss in iter_tripinfo_metrics(tripinfo_path):
             if veh_id in network_metric_departed_vehicle_ids:
                 network_durations.append(duration)
                 network_waits.append(waiting_time)
+                network_time_losses.append(time_loss)
             if veh_id in target_tl_seen_vehicle_ids:
                 target_durations.append(duration)
                 target_waits.append(waiting_time)
+                target_time_losses.append(time_loss)
     except Exception as exc:
         base["tripinfo_parse_error"] = f"{type(exc).__name__}: {exc}"
         return base
@@ -1999,16 +2256,20 @@ def parse_tripinfo_att_awt_metrics(
             ),
             "network_travel_time_total_sec": float(sum(network_durations)),
             "network_waiting_time_total_sec": float(sum(network_waits)),
+            "network_travel_time_delay_total_sec": float(sum(network_time_losses)),
             "network_att_sec": mean_or_none(network_durations),
             "network_awt_sec": mean_or_none(network_waits),
+            "network_travel_time_delay_sec": mean_or_none(network_time_losses),
             "target_tl_trip_completed_count": len(target_durations),
             "target_tl_trip_completion_ratio": (
                 len(target_durations) / target_seen if target_seen else None
             ),
             "target_tl_travel_time_total_sec": float(sum(target_durations)),
             "target_tl_waiting_time_total_sec": float(sum(target_waits)),
+            "target_tl_travel_time_delay_total_sec": float(sum(target_time_losses)),
             "target_tl_att_sec": mean_or_none(target_durations),
             "target_tl_awt_sec": mean_or_none(target_waits),
+            "target_tl_travel_time_delay_sec": mean_or_none(target_time_losses),
         }
     )
     return base
@@ -2042,10 +2303,29 @@ def start_sumo(
     if tripinfo_path is not None:
         tripinfo_path.parent.mkdir(parents=True, exist_ok=True)
         cmd.extend(["--tripinfo-output", str(tripinfo_path)])
+        append_tripinfo_output_options(cmd, args)
+    if args.gui and args.gui_settings_file is not None:
+        cmd.extend(["--gui-settings-file", str(args.gui_settings_file)])
+    if args.gui:
+        cmd.append("--start")
+    if args.gui and args.gui_window_size:
+        cmd.extend(["--window-size", args.gui_window_size])
     if args.gui and args.gui_delay_ms is not None:
         cmd.extend(["--delay", str(args.gui_delay_ms)])
     traci.start(cmd, label=label, doSwitch=False, numRetries=args.traci_start_retries)
     return traci.getConnection(label)
+
+
+def append_tripinfo_output_options(cmd: list[str], args: argparse.Namespace) -> None:
+    for attr, option in (
+        ("tripinfo_write_unfinished", "tripinfo-output.write-unfinished"),
+        ("tripinfo_write_undeparted", "tripinfo-output.write-undeparted"),
+    ):
+        if not bool(getattr(args, attr, False)):
+            continue
+        if not _sumo_supports_option(args, option):
+            raise ValueError(f"SUMO binary does not support --{option}")
+        cmd.extend([f"--{option}", "true"])
 
 
 def ensure_sumo_output_dirs(sumocfg: Path) -> None:
@@ -2135,6 +2415,7 @@ def run_one_tl(
     args: argparse.Namespace,
     calls_fh: Any,
     prediction_inputs_fh: Any,
+    step_metrics_fh: Any,
     benchmark_log_fh: Any,
 ) -> dict[str, Any]:
     traci_mod = _import_traci()
@@ -2162,6 +2443,15 @@ def run_one_tl(
         sumo_cmd_preview.extend(["--end", str(total_steps)])
     if tripinfo_path is not None:
         sumo_cmd_preview.extend(["--tripinfo-output", str(tripinfo_path)])
+        append_tripinfo_output_options(sumo_cmd_preview, args)
+    if args.gui and args.gui_settings_file is not None:
+        sumo_cmd_preview.extend(["--gui-settings-file", str(args.gui_settings_file)])
+    if args.gui:
+        sumo_cmd_preview.append("--start")
+    if args.gui and args.gui_window_size:
+        sumo_cmd_preview.extend(["--window-size", args.gui_window_size])
+    if args.gui and args.gui_delay_ms is not None:
+        sumo_cmd_preview.extend(["--delay", str(args.gui_delay_ms)])
     write_benchmark_log(
         benchmark_log_fh,
         "sumo_start",
@@ -2185,6 +2475,7 @@ def run_one_tl(
     forecaster = make_pred_wait_forecaster(args)
     queue_samples_raw: list[float] = []
     queue_samples_split_overlap: list[float] = []
+    queue_length_samples_vehicles: list[float] = []
     local_delay_total_s = 0.0
     incoming_vehicle_observations = 0
     throughput_total_intersection_passages = 0
@@ -2201,25 +2492,20 @@ def run_one_tl(
     format_ok = 0
     control_usable = 0
     strict_control_usable = 0
-    directional_control_usable = 0
     relaxed_json_success = 0
     relaxed_control_usable = 0
-    relaxed_directional_control_usable = 0
     repaired_control_usable = 0
-    repaired_directional_control_usable = 0
     repair_applied = 0
     calls = 0
     applied = 0
     fallback_applied = 0
     parse_errors: dict[str, int] = {}
-    directional_violations: dict[str, int] = {}
-    relaxed_directional_violations: dict[str, int] = {}
-    repaired_directional_violations: dict[str, int] = {}
     relaxed_parse_errors: dict[str, int] = {}
     repair_errors: dict[str, int] = {}
     repair_actions: dict[str, int] = {}
     green_phases: list[GreenPhase] = []
     last_decision = -10**9
+    controller_decisions = 0
     steps_completed = 0
     skipped_forecaster_not_ready = 0
     pending_cycle_plan: dict[str, Any] | None = None
@@ -2264,6 +2550,122 @@ def run_one_tl(
 
         for step in range(total_steps):
             sim_time = int(traci.simulation.getTime())
+            should_pressure_decide = (
+                args.controller == "max_pressure"
+                and sim_time < control_total_steps
+                and sim_time - last_decision >= args.decision_interval_seconds
+            )
+            if should_pressure_decide:
+                if args.action_delay_cycles == 1 and pending_cycle_plan is not None:
+                    apply_cycle_plan(traci, tl_id, green_phases, pending_cycle_plan["solution"])
+                    applied += 1
+                    delayed_plans_applied += 1
+                    write_benchmark_log(
+                        benchmark_log_fh,
+                        "delayed_plan_applied",
+                        {
+                            "scenario": scenario,
+                            "usage": usage,
+                            "tl_id": tl_id,
+                            "sim_time": sim_time,
+                            "applied_solution": pending_cycle_plan["solution"],
+                            "applied_control_mode": pending_cycle_plan.get("control_mode"),
+                            "fallback_applied": False,
+                            "fallback_reason": None,
+                            "generated_sim_time": pending_cycle_plan.get("generated_sim_time"),
+                            "generated_decision_index": pending_cycle_plan.get("generated_decision_index"),
+                            "action_delay_cycles": args.action_delay_cycles,
+                        },
+                        to_stderr=args.log_events_to_stderr,
+                    )
+                    pending_cycle_plan = None
+
+                prediction_input, prediction_audit = build_legacy_snapshot_prediction_input(
+                    traci,
+                    tl_id,
+                    green_phases,
+                )
+                pressure_solution, pressure_audit = build_max_pressure_cycle_plan(traci, green_phases)
+                controller_decisions += 1
+                last_decision = sim_time
+                prediction_audit = {
+                    "scenario": scenario,
+                    "usage": usage,
+                    "tl_id": tl_id,
+                    "sim_time": sim_time,
+                    "controller": args.controller,
+                    "prediction_input": prediction_input,
+                    "max_pressure": pressure_audit,
+                    **prediction_audit,
+                }
+                write_jsonl_line(prediction_inputs_fh, prediction_audit)
+
+                applied_solution = None
+                queued_solution = None
+                applied_control_mode = None
+                queued_control_mode = None
+                plan_queued = False
+                if args.action_delay_cycles == 0:
+                    apply_cycle_plan(traci, tl_id, green_phases, pressure_solution)
+                    applied += 1
+                    applied_solution = pressure_solution
+                    applied_control_mode = "max_pressure_cycle_allocator"
+                else:
+                    pending_cycle_plan = {
+                        "solution": pressure_solution,
+                        "control_mode": "max_pressure_cycle_allocator",
+                        "fallback_reason": None,
+                        "generated_sim_time": sim_time,
+                        "generated_decision_index": controller_decisions,
+                    }
+                    plans_queued += 1
+                    queued_solution = pressure_solution
+                    queued_control_mode = "max_pressure_cycle_allocator"
+                    plan_queued = True
+
+                write_benchmark_log(
+                    benchmark_log_fh,
+                    "max_pressure_decision_complete",
+                    {
+                        "scenario": scenario,
+                        "usage": usage,
+                        "tl_id": tl_id,
+                        "sim_time": sim_time,
+                        "decision_index": controller_decisions,
+                        "action_delay_cycles": args.action_delay_cycles,
+                        "plan_applied": bool(applied_solution is not None),
+                        "plan_queued": plan_queued,
+                        "applied_solution": applied_solution,
+                        "queued_solution": queued_solution,
+                        "pending_plan_after_call": bool(pending_cycle_plan is not None),
+                        "max_pressure": pressure_audit,
+                    },
+                    to_stderr=args.log_events_to_stderr,
+                )
+                write_jsonl_line(
+                    calls_fh,
+                    {
+                        "scenario": scenario,
+                        "usage": usage,
+                        "tl_id": tl_id,
+                        "sim_time": sim_time,
+                        "controller": args.controller,
+                        "decision_index": controller_decisions,
+                        "input_mode": "legacy_snapshot",
+                        "prediction_input": prediction_input,
+                        "solution": pressure_solution,
+                        "applied_solution": applied_solution,
+                        "queued_solution": queued_solution,
+                        "online_control_mode": "max_pressure_cycle_allocator",
+                        "action_delay_cycles": args.action_delay_cycles,
+                        "applied_control_mode": applied_control_mode,
+                        "queued_control_mode": queued_control_mode,
+                        "plan_queued": plan_queued,
+                        "fallback_reason": None,
+                        "max_pressure": pressure_audit,
+                    },
+                )
+
             should_decide = (
                 args.controller == "model"
                 and sim_time < control_total_steps
@@ -2355,38 +2757,23 @@ def run_one_tl(
                     )
                     result = call_model(port, prediction_input, args)
                     calls += 1
+                    controller_decisions += 1
                     last_decision = sim_time
                     if result.format_ok:
                         format_ok += 1
                     if result.strict_control_usable:
                         control_usable += 1
                         strict_control_usable += 1
-                    if result.directional_control_usable:
-                        directional_control_usable += 1
                     if result.relaxed_json_success:
                         relaxed_json_success += 1
                     if result.relaxed_control_usable:
                         relaxed_control_usable += 1
-                    if result.relaxed_directional_control_usable:
-                        relaxed_directional_control_usable += 1
                     if result.repaired_control_usable:
                         repaired_control_usable += 1
-                    if result.repaired_directional_control_usable:
-                        repaired_directional_control_usable += 1
                     if result.elapsed_sec is not None:
                         response_times.append(float(result.elapsed_sec))
                     if result.parse_error:
                         parse_errors[result.parse_error] = parse_errors.get(result.parse_error, 0) + 1
-                    for violation in result.directional_violations:
-                        directional_violations[violation] = directional_violations.get(violation, 0) + 1
-                    for violation in result.relaxed_directional_violations:
-                        relaxed_directional_violations[violation] = (
-                            relaxed_directional_violations.get(violation, 0) + 1
-                        )
-                    for violation in result.repaired_directional_violations:
-                        repaired_directional_violations[violation] = (
-                            repaired_directional_violations.get(violation, 0) + 1
-                        )
                     if result.relaxed_parse_error:
                         relaxed_parse_errors[result.relaxed_parse_error] = (
                             relaxed_parse_errors.get(result.relaxed_parse_error, 0) + 1
@@ -2402,13 +2789,6 @@ def run_one_tl(
                         candidate_solution = clip_solution(prediction_input["prediction"]["phase_waits"], result.solution)
                         candidate_control_mode = "strict"
                     elif (
-                        args.online_control_mode == "directional"
-                        and result.directional_control_usable
-                        and result.solution is not None
-                    ):
-                        candidate_solution = clip_solution(prediction_input["prediction"]["phase_waits"], result.solution)
-                        candidate_control_mode = "directional"
-                    elif (
                         args.online_control_mode == "relaxed"
                         and result.relaxed_control_usable
                         and result.relaxed_solution is not None
@@ -2419,31 +2799,12 @@ def run_one_tl(
                         )
                         candidate_control_mode = "relaxed"
                     elif (
-                        args.online_control_mode == "relaxed_directional"
-                        and result.relaxed_directional_control_usable
-                        and result.relaxed_solution is not None
-                    ):
-                        candidate_solution = clip_solution(
-                            prediction_input["prediction"]["phase_waits"],
-                            result.relaxed_solution,
-                        )
-                        candidate_control_mode = "relaxed_directional"
-                    elif (
                         args.online_control_mode == "repaired"
                         and result.repaired_control_usable
                         and result.repaired_solution is not None
                     ):
                         candidate_solution = result.repaired_solution
                         candidate_control_mode = "repaired"
-                        if result.repair_actions:
-                            repair_applied += 1
-                    elif (
-                        args.online_control_mode == "repaired_directional"
-                        and result.repaired_directional_control_usable
-                        and result.repaired_solution is not None
-                    ):
-                        candidate_solution = result.repaired_solution
-                        candidate_control_mode = "repaired_directional"
                         if result.repair_actions:
                             repair_applied += 1
 
@@ -2503,12 +2864,9 @@ def run_one_tl(
                             "control_usable": result.strict_control_usable,
                             "strict_format_ok": result.format_ok,
                             "strict_control_usable": result.strict_control_usable,
-                            "directional_control_usable": result.directional_control_usable,
                             "relaxed_json_success": result.relaxed_json_success,
                             "relaxed_control_usable": result.relaxed_control_usable,
-                            "relaxed_directional_control_usable": result.relaxed_directional_control_usable,
                             "repaired_control_usable": result.repaired_control_usable,
-                            "repaired_directional_control_usable": result.repaired_directional_control_usable,
                             "repair_actions": result.repair_actions,
                             "online_control_mode": args.online_control_mode,
                             "action_delay_cycles": args.action_delay_cycles,
@@ -2526,9 +2884,6 @@ def run_one_tl(
                             "relaxed_parse_error": result.relaxed_parse_error,
                             "repair_error": result.repair_error,
                             "violations": result.violations,
-                            "directional_violations": result.directional_violations,
-                            "relaxed_directional_violations": result.relaxed_directional_violations,
-                            "repaired_directional_violations": result.repaired_directional_violations,
                             "relaxed_violations": result.relaxed_violations,
                         },
                         to_stderr=args.log_events_to_stderr,
@@ -2557,17 +2912,11 @@ def run_one_tl(
                             "control_usable": result.strict_control_usable,
                             "strict_format_ok": result.format_ok,
                             "strict_control_usable": result.strict_control_usable,
-                            "directional_control_usable": result.directional_control_usable,
                             "relaxed_json_success": result.relaxed_json_success,
                             "relaxed_control_usable": result.relaxed_control_usable,
-                            "relaxed_directional_control_usable": result.relaxed_directional_control_usable,
                             "repaired_control_usable": result.repaired_control_usable,
-                            "repaired_directional_control_usable": result.repaired_directional_control_usable,
                             "repair_actions": result.repair_actions,
                             "violations": result.violations,
-                            "directional_violations": result.directional_violations,
-                            "relaxed_directional_violations": result.relaxed_directional_violations,
-                            "repaired_directional_violations": result.repaired_directional_violations,
                             "relaxed_violations": result.relaxed_violations,
                             "elapsed_sec": result.elapsed_sec,
                             "parse_error": result.parse_error,
@@ -2583,8 +2932,10 @@ def run_one_tl(
                 forecaster.observe(traci, green_phases)
             current_incoming = incoming_vehicle_ids(traci, green_phases)
             if metric_start <= step < metric_end:
+                step_network_departed_vehicle_ids: set[str] = set()
                 try:
-                    network_metric_departed_vehicle_ids.update(traci.simulation.getDepartedIDList())
+                    step_network_departed_vehicle_ids = set(traci.simulation.getDepartedIDList())
+                    network_metric_departed_vehicle_ids.update(step_network_departed_vehicle_ids)
                 except Exception:
                     pass
                 target_tl_seen_vehicle_ids.update(current_incoming)
@@ -2599,6 +2950,7 @@ def run_one_tl(
                 )
                 queue_samples_raw.extend(sample.phase_queues_raw)
                 queue_samples_split_overlap.extend(sample.phase_queues_split_overlap)
+                queue_length_samples_vehicles.append(float(sample.incoming_vehicle_count))
                 step_queues = (
                     sample.phase_queues_split_overlap
                     if args.phase_queue_mode == "split-overlap"
@@ -2618,6 +2970,25 @@ def run_one_tl(
                 local_delay_total_s += sample.local_delay_delta_s
                 incoming_vehicle_observations += sample.incoming_vehicle_count
                 throughput_total_intersection_passages += sample.passage_count
+                if args.record_step_metrics:
+                    write_step_metric_record(
+                        step_metrics_fh,
+                        traci,
+                        scenario=scenario,
+                        usage=usage,
+                        tl_id=tl_id,
+                        step=step,
+                        sim_time_before_step=sim_time,
+                        metric_start=metric_start,
+                        metric_end=metric_end,
+                        control_total_steps=control_total_steps,
+                        sample=sample,
+                        step_network_departed_vehicle_ids=step_network_departed_vehicle_ids,
+                        green_phases=green_phases,
+                        queue_thresholds=queue_thresholds,
+                        args=args,
+                        tripinfo_path=tripinfo_path,
+                    )
                 prev_incoming_vehicle_ids = current_incoming
             elif step < metric_start:
                 prev_incoming_vehicle_ids = current_incoming
@@ -2648,6 +3019,9 @@ def run_one_tl(
     split_p95_queue = percentile(queue_samples_split_overlap, 0.95)
     raw_max_queue = max(queue_samples_raw) if queue_samples_raw else None
     split_max_queue = max(queue_samples_split_overlap) if queue_samples_split_overlap else None
+    avg_queue_length = mean(queue_length_samples_vehicles) if queue_length_samples_vehicles else None
+    p95_queue_length = percentile(queue_length_samples_vehicles, 0.95)
+    max_queue_length = max(queue_length_samples_vehicles) if queue_length_samples_vehicles else None
     selected_queue = split_avg_queue if args.phase_queue_mode == "split-overlap" else raw_avg_queue
     selected_p95_queue = split_p95_queue if args.phase_queue_mode == "split-overlap" else raw_p95_queue
     selected_max_queue = split_max_queue if args.phase_queue_mode == "split-overlap" else raw_max_queue
@@ -2726,10 +3100,14 @@ def run_one_tl(
             "network_trip_completed_count": tripinfo_metrics["network_trip_completed_count"],
             "network_att_sec": tripinfo_metrics["network_att_sec"],
             "network_awt_sec": tripinfo_metrics["network_awt_sec"],
+            "network_travel_time_delay_sec": tripinfo_metrics["network_travel_time_delay_sec"],
             "target_tl_seen_vehicle_count": tripinfo_metrics["target_tl_seen_vehicle_count"],
             "target_tl_trip_completed_count": tripinfo_metrics["target_tl_trip_completed_count"],
             "target_tl_att_sec": tripinfo_metrics["target_tl_att_sec"],
             "target_tl_awt_sec": tripinfo_metrics["target_tl_awt_sec"],
+            "target_tl_travel_time_delay_sec": tripinfo_metrics[
+                "target_tl_travel_time_delay_sec"
+            ],
         },
         to_stderr=args.log_events_to_stderr,
     )
@@ -2753,36 +3131,26 @@ def run_one_tl(
         "phase_queue_mode": args.phase_queue_mode,
         "forecaster_not_ready_steps": skipped_forecaster_not_ready,
         "online_control_mode": args.online_control_mode if args.controller == "model" else None,
-        "action_delay_cycles": args.action_delay_cycles if args.controller == "model" else 0,
+        "action_delay_cycles": args.action_delay_cycles if args.controller in {"model", "max_pressure"} else 0,
         "format_success_rate": (format_ok / calls * 100.0) if calls else None,
         "control_usable_rate": (control_usable / calls * 100.0) if calls else None,
         "strict_format_success_rate": (format_ok / calls * 100.0) if calls else None,
         "strict_control_usable_rate": (strict_control_usable / calls * 100.0) if calls else None,
-        "directional_control_usable_rate": (directional_control_usable / calls * 100.0) if calls else None,
         "relaxed_json_success_rate": (relaxed_json_success / calls * 100.0) if calls else None,
         "relaxed_control_usable_rate": (relaxed_control_usable / calls * 100.0) if calls else None,
-        "relaxed_directional_control_usable_rate": (
-            relaxed_directional_control_usable / calls * 100.0
-        )
-        if calls
-        else None,
         "repaired_control_usable_rate": (repaired_control_usable / calls * 100.0) if calls else None,
-        "repaired_directional_control_usable_rate": (
-            repaired_directional_control_usable / calls * 100.0
-        )
-        if calls
-        else None,
         "repair_applied_rate": (repair_applied / calls * 100.0) if calls else None,
         "lint_success_rate": (control_usable / calls * 100.0) if calls else None,
-        "model_calls": calls,
-        "decision_count": calls,
+        "model_calls": calls if args.controller == "model" else 0,
+        "decision_count": controller_decisions,
+        "controller_decision_count": controller_decisions,
         "plans_queued": plans_queued,
         "delayed_plans_applied": delayed_plans_applied,
         "pending_plan_left_unapplied": bool(pending_cycle_plan is not None),
         "plans_applied": applied,
-        "plans_applied_rate": (applied / calls * 100.0) if calls else None,
+        "plans_applied_rate": (applied / controller_decisions * 100.0) if controller_decisions else None,
         "fallback_plans_applied": fallback_applied,
-        "fallback_plan_rate": (fallback_applied / calls * 100.0) if calls else None,
+        "fallback_plan_rate": (fallback_applied / controller_decisions * 100.0) if controller_decisions else None,
         "active_tl": metric_active,
         "inactive_reason": inactive_reason,
         "metric_window_steps": max(0, metric_end - metric_start),
@@ -2791,6 +3159,8 @@ def run_one_tl(
         "passage_per_metric_observation": passage_per_metric_observation,
         "passage_seen_ratio_approx": passage_per_metric_observation,
         "queue_sample_count": len(queue_samples_raw),
+        "queue_length_sample_count": len(queue_length_samples_vehicles),
+        "queue_length_scope": "target_intersection_unique_incoming_lanes_vehicle_count",
         "queue_threshold": primary_queue_threshold,
         "queue_thresholds": queue_thresholds,
         "queue_over_threshold_seconds": float(
@@ -2820,6 +3190,9 @@ def run_one_tl(
         "p95_queue_vehicles_split_overlap": split_p95_queue,
         "max_queue_vehicles_raw": raw_max_queue,
         "max_queue_vehicles_split_overlap": split_max_queue,
+        "avg_queue_length_vehicles": avg_queue_length,
+        "p95_queue_length_vehicles": p95_queue_length,
+        "max_queue_length_vehicles": max_queue_length,
         "raw_avg_delay_per_vehicle_sec": raw_avg_delay,
         "raw_throughput_veh_per_min": raw_throughput,
         "avg_queue_vehicles": selected_queue if metric_active else None,
@@ -2829,9 +3202,6 @@ def run_one_tl(
         "throughput_veh_per_min": raw_throughput if metric_active else None,
         "avg_response_time_sec": mean(response_times) if response_times else None,
         "parse_errors": parse_errors,
-        "directional_violations": directional_violations,
-        "relaxed_directional_violations": relaxed_directional_violations,
-        "repaired_directional_violations": repaired_directional_violations,
         "relaxed_parse_errors": relaxed_parse_errors,
         "repair_errors": repair_errors,
         "repair_actions": repair_actions,
@@ -2872,6 +3242,18 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         for row in items:
             value = row.get(key)
             weight = float(row.get("queue_sample_count") or 0.0)
+            if value is None or weight <= 0:
+                continue
+            numerator += float(value) * weight
+            denominator += weight
+        return numerator / denominator if denominator else None
+
+    def weighted_queue_length(items: list[dict[str, Any]], key: str) -> float | None:
+        numerator = 0.0
+        denominator = 0.0
+        for row in items:
+            value = row.get(key)
+            weight = float(row.get("queue_length_sample_count") or row.get("metric_window_steps") or 0.0)
             if value is None or weight <= 0:
                 continue
             numerator += float(value) * weight
@@ -2939,12 +3321,9 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "control_usable_rate",
             "strict_format_success_rate",
             "strict_control_usable_rate",
-            "directional_control_usable_rate",
             "relaxed_json_success_rate",
             "relaxed_control_usable_rate",
-            "relaxed_directional_control_usable_rate",
             "repaired_control_usable_rate",
-            "repaired_directional_control_usable_rate",
             "repair_applied_rate",
             "plans_applied_rate",
             "fallback_plan_rate",
@@ -2952,6 +3331,12 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             value = weighted_rate(items, key)
         elif key in {"avg_queue_vehicles", "p95_queue_vehicles", "max_queue_vehicles"}:
             value = weighted_queue(items, key)
+        elif key in {
+            "avg_queue_length_vehicles",
+            "p95_queue_length_vehicles",
+            "max_queue_length_vehicles",
+        }:
+            value = weighted_queue_length(items, key)
         elif key == "avg_delay_per_vehicle_sec":
             value = weighted_delay(items)
         elif key == "throughput_veh_per_min":
@@ -2970,6 +3355,12 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "network_waiting_time_total_sec",
                 "network_trip_completed_count",
             )
+        elif key == "network_travel_time_delay_sec":
+            value = weighted_sum_over_count(
+                items,
+                "network_travel_time_delay_total_sec",
+                "network_trip_completed_count",
+            )
         elif key == "target_tl_att_sec":
             value = weighted_sum_over_count(
                 items,
@@ -2980,6 +3371,12 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             value = weighted_sum_over_count(
                 items,
                 "target_tl_waiting_time_total_sec",
+                "target_tl_trip_completed_count",
+            )
+        elif key == "target_tl_travel_time_delay_sec":
+            value = weighted_sum_over_count(
+                items,
+                "target_tl_travel_time_delay_total_sec",
                 "target_tl_trip_completed_count",
             )
         elif key == "network_trip_completion_ratio":
@@ -3015,6 +3412,9 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "decision_count": sum(float(row.get("decision_count") or 0.0) for row in items),
             "queue_sample_count": sum(float(row.get("queue_sample_count") or 0.0) for row in items),
+            "queue_length_sample_count": sum(
+                float(row.get("queue_length_sample_count") or 0.0) for row in items
+            ),
             "throughput_total_intersection_passages": sum(
                 float(row.get("throughput_total_intersection_passages") or 0.0) for row in items
             ),
@@ -3055,18 +3455,18 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "control_usable_rate",
         "strict_format_success_rate",
         "strict_control_usable_rate",
-        "directional_control_usable_rate",
         "relaxed_json_success_rate",
         "relaxed_control_usable_rate",
-        "relaxed_directional_control_usable_rate",
         "repaired_control_usable_rate",
-        "repaired_directional_control_usable_rate",
         "repair_applied_rate",
         "plans_applied_rate",
         "fallback_plan_rate",
         "avg_queue_vehicles",
         "p95_queue_vehicles",
         "max_queue_vehicles",
+        "avg_queue_length_vehicles",
+        "p95_queue_length_vehicles",
+        "max_queue_length_vehicles",
         "avg_delay_per_vehicle_sec",
         "local_delay_per_intersection_minute_sec",
         "passage_per_metric_observation",
@@ -3086,9 +3486,11 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "avg_response_time_sec",
         "network_att_sec",
         "network_awt_sec",
+        "network_travel_time_delay_sec",
         "network_trip_completion_ratio",
         "target_tl_att_sec",
         "target_tl_awt_sec",
+        "target_tl_travel_time_delay_sec",
         "target_tl_trip_completion_ratio",
     ):
         overall.update(metric_bundle(rows, key))
@@ -3113,18 +3515,18 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "control_usable_rate",
             "strict_format_success_rate",
             "strict_control_usable_rate",
-            "directional_control_usable_rate",
             "relaxed_json_success_rate",
             "relaxed_control_usable_rate",
-            "relaxed_directional_control_usable_rate",
             "repaired_control_usable_rate",
-            "repaired_directional_control_usable_rate",
             "repair_applied_rate",
             "plans_applied_rate",
             "fallback_plan_rate",
             "avg_queue_vehicles",
             "p95_queue_vehicles",
             "max_queue_vehicles",
+            "avg_queue_length_vehicles",
+            "p95_queue_length_vehicles",
+            "max_queue_length_vehicles",
             "avg_delay_per_vehicle_sec",
             "local_delay_per_intersection_minute_sec",
             "passage_per_metric_observation",
@@ -3144,9 +3546,11 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "avg_response_time_sec",
             "network_att_sec",
             "network_awt_sec",
+            "network_travel_time_delay_sec",
             "network_trip_completion_ratio",
             "target_tl_att_sec",
             "target_tl_awt_sec",
+            "target_tl_travel_time_delay_sec",
             "target_tl_trip_completion_ratio",
         ):
             payload.update(metric_bundle(items, key))
@@ -3164,18 +3568,18 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "control_usable_rate": "weighted_by_decision_count",
             "strict_format_success_rate": "weighted_by_decision_count",
             "strict_control_usable_rate": "weighted_by_decision_count",
-            "directional_control_usable_rate": "weighted_by_decision_count",
             "relaxed_json_success_rate": "weighted_by_decision_count",
             "relaxed_control_usable_rate": "weighted_by_decision_count",
-            "relaxed_directional_control_usable_rate": "weighted_by_decision_count",
             "repaired_control_usable_rate": "weighted_by_decision_count",
-            "repaired_directional_control_usable_rate": "weighted_by_decision_count",
             "repair_applied_rate": "weighted_by_decision_count",
             "plans_applied_rate": "weighted_by_decision_count",
             "fallback_plan_rate": "weighted_by_decision_count",
             "avg_queue_vehicles": "weighted_by_queue_sample_count",
             "p95_queue_vehicles": "weighted_by_queue_sample_count",
             "max_queue_vehicles": "weighted_by_queue_sample_count",
+            "avg_queue_length_vehicles": "weighted_by_queue_length_sample_count",
+            "p95_queue_length_vehicles": "weighted_by_queue_length_sample_count",
+            "max_queue_length_vehicles": "weighted_by_queue_length_sample_count",
             "avg_delay_per_vehicle_sec": "sum(local_delay_total_s)/sum(throughput_total_intersection_passages)",
             "local_delay_per_intersection_minute_sec": "sum(local_delay_total_s)/sum(eval_minutes*controlled_tls_count)",
             "passage_per_metric_observation": "sum(throughput_total_intersection_passages)/sum(metric_vehicle_observations)",
@@ -3195,9 +3599,11 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "avg_response_time_sec": "weighted_by_decision_count",
             "network_att_sec": "sum(network_travel_time_total_sec)/sum(network_trip_completed_count)",
             "network_awt_sec": "sum(network_waiting_time_total_sec)/sum(network_trip_completed_count)",
+            "network_travel_time_delay_sec": "sum(network_travel_time_delay_total_sec)/sum(network_trip_completed_count)",
             "network_trip_completion_ratio": "sum(network_trip_completed_count)/sum(network_metric_departed_vehicle_count)",
             "target_tl_att_sec": "sum(target_tl_travel_time_total_sec)/sum(target_tl_trip_completed_count)",
             "target_tl_awt_sec": "sum(target_tl_waiting_time_total_sec)/sum(target_tl_trip_completed_count)",
+            "target_tl_travel_time_delay_sec": "sum(target_tl_travel_time_delay_total_sec)/sum(target_tl_trip_completed_count)",
             "target_tl_trip_completion_ratio": "sum(target_tl_trip_completed_count)/sum(target_tl_seen_vehicle_count)",
         },
         "inactive_tl_definition": (
@@ -3354,12 +3760,6 @@ def validate_runtime_args(args: argparse.Namespace) -> None:
         raise ValueError("--gui-delay-ms must be >= 0")
     if args.traci_start_retries < 1:
         raise ValueError("--traci-start-retries must be >= 1")
-    if args.directional_control_min_delta_sec < 0:
-        raise ValueError("--directional-control-min-delta-sec must be >= 0")
-    if args.directional_control_saturation_gap < 0:
-        raise ValueError("--directional-control-saturation-gap must be >= 0")
-    if args.directional_control_green_tolerance_sec < 0:
-        raise ValueError("--directional-control-green-tolerance-sec must be >= 0")
     if args.phase_queue_mode not in {"raw", "split-overlap"}:
         raise ValueError("--phase-queue-mode must be raw or split-overlap")
     if args.simulation_seconds is not None and args.simulation_seconds < args.warmup_seconds + args.metric_seconds:
@@ -3407,7 +3807,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--tl-limit", type=int, default=None)
     parser.add_argument("--list-scenarios", action="store_true")
     parser.add_argument("--list-tl-ids", action="store_true")
-    parser.add_argument("--controller", choices=["fixed", "model"], default="fixed")
+    parser.add_argument("--controller", choices=["fixed", "model", "max_pressure"], default="fixed")
     parser.add_argument("--input-mode", choices=["legacy_snapshot", "github_official"], default="legacy_snapshot")
     parser.add_argument("--model-backend", choices=["llama", "openai", "hf"], default="llama")
     parser.add_argument(
@@ -3471,6 +3871,24 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--record-step-metrics",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Write per-second metric-window records to step_metrics.jsonl so 300-900s "
+            "and 300-1500s windows can be recomputed from the same run."
+        ),
+    )
+    parser.add_argument(
+        "--record-step-vehicle-ids",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Include per-step vehicle id lists in step_metrics.jsonl. Keep this on for "
+            "exact ATT/AWT re-windowing from tripinfo."
+        ),
+    )
+    parser.add_argument(
         "--demand-scale",
         type=float,
         default=1.0,
@@ -3501,6 +3919,18 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=8,
         help="Maximum synthetic from->to routes generated per target TL. 0 means all.",
     )
+    parser.add_argument(
+        "--target-peak-route-selection",
+        choices=["net_order", "best_edges", "diverse_sources"],
+        default="net_order",
+        help=(
+            "How synthetic target_peak routes are selected from controlled connections. "
+            "net_order preserves legacy behavior; diverse_sources avoids placing all "
+            "target flows on the same incoming edge when possible."
+        ),
+    )
+    parser.add_argument("--target-peak-min-source-length", type=float, default=0.0)
+    parser.add_argument("--target-peak-min-dest-length", type=float, default=0.0)
     parser.add_argument("--target-peak-begin", type=float, default=0.0)
     parser.add_argument("--target-peak-end", type=float, default=None)
     parser.add_argument(
@@ -3518,21 +3948,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--online-control-mode",
         choices=[
             "strict",
-            "directional",
             "relaxed",
-            "relaxed_directional",
             "repaired",
-            "repaired_directional",
         ],
         default="strict",
         help=(
             "Which parsed model output is eligible for actual online control. "
-            "strict requires the full benchmark protocol; directional also requires "
-            "a non-trivial, saturation-aligned control decision; relaxed accepts a "
-            "valid JSON plan without reasoning/SOLUTION tags; relaxed_directional "
-            "adds the directional gate to that parsed plan; repaired additionally "
-            "allows safe schema repair, reordering, integer coercion, and clipping to min/max; "
-            "repaired_directional adds the directional gate after those repairs."
+            "strict requires the full benchmark protocol; relaxed accepts a valid "
+            "JSON plan without reasoning/SOLUTION tags; repaired additionally allows "
+            "safe schema repair, reordering, integer coercion, and clipping to min/max."
         ),
     )
     parser.add_argument(
@@ -3545,34 +3969,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
             "the decision payload itself is usable when the model repeats or appends text."
         ),
     )
-    parser.add_argument(
-        "--directional-control-min-delta-sec",
-        type=float,
-        default=5.0,
-        help=(
-            "Minimum absolute change from default timing required for "
-            "directional_control_usable. This also gates online control when "
-            "--online-control-mode is directional, relaxed_directional, or repaired_directional."
-        ),
-    )
-    parser.add_argument(
-        "--directional-control-saturation-gap",
-        type=float,
-        default=0.05,
-        help=(
-            "Minimum pred_saturation gap used when checking whether higher "
-            "saturation phases receive at least comparable green time."
-        ),
-    )
-    parser.add_argument(
-        "--directional-control-green-tolerance-sec",
-        type=float,
-        default=5.0,
-        help=(
-            "Allowed green-time slack before a higher-saturation phase is counted "
-            "as receiving less green than a lower-saturation phase."
-        ),
-    )
     parser.add_argument("--pred-wait-forecaster", choices=["none", "rolling_mean"], default="none")
     parser.add_argument("--forecaster-history-steps", type=int, default=60)
     parser.add_argument("--forecaster-min-history-steps", type=int, default=5)
@@ -3581,10 +3977,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--gui", action="store_true")
     parser.add_argument("--gui-delay-ms", type=int, default=None)
+    parser.add_argument("--gui-settings-file", type=Path, default=None)
+    parser.add_argument("--gui-window-size", type=str, default=None)
     parser.add_argument("--ngl", type=int, default=99)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--ctx-size", type=int, default=4096)
-    parser.add_argument("--n-predict", type=int, default=384)
+    parser.add_argument("--n-predict", type=int, default=512)
     parser.add_argument("--timeout-sec", type=int, default=600)
     parser.add_argument("--server-startup-sec", type=int, default=240)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -3635,6 +4033,18 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
             "the normal metric window."
         ),
     )
+    parser.add_argument(
+        "--tripinfo-write-unfinished",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Ask SUMO to write tripinfo for vehicles that have not arrived by simulation end.",
+    )
+    parser.add_argument(
+        "--tripinfo-write-undeparted",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Ask SUMO to write tripinfo for vehicles that could not depart by simulation end.",
+    )
     parser.add_argument("--continue-on-run-error", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args(argv)
 
@@ -3684,13 +4094,21 @@ def main(argv: list[str] | None = None) -> int:
             "metric_start_second": args.warmup_seconds,
             "metric_end_second": args.warmup_seconds + args.metric_seconds,
             "tripinfo_drain_seconds": args.tripinfo_drain_seconds if args.tripinfo_metrics else 0,
+            "tripinfo_write_unfinished": args.tripinfo_write_unfinished if args.tripinfo_metrics else False,
+            "tripinfo_write_undeparted": args.tripinfo_write_undeparted if args.tripinfo_metrics else False,
             "official_window_enforced": args.input_mode == "github_official",
         },
         "queue_thresholds_effective": normalized_queue_thresholds(args),
     }
     write_json(output_dir / "config.json", config_payload)
     write_json(output_dir / "predictor_meta.json", predictor_meta(args))
-    for jsonl_name in ("per_tl.jsonl", "model_calls.jsonl", "failures.jsonl", "prediction_inputs.jsonl"):
+    for jsonl_name in (
+        "per_tl.jsonl",
+        "model_calls.jsonl",
+        "failures.jsonl",
+        "prediction_inputs.jsonl",
+        "step_metrics.jsonl",
+    ):
         (output_dir / jsonl_name).touch()
 
     proc: subprocess.Popen | None = None
@@ -3704,6 +4122,7 @@ def main(argv: list[str] | None = None) -> int:
         with (
             (output_dir / "model_calls.jsonl").open("a", encoding="utf-8") as calls_fh,
             (output_dir / "prediction_inputs.jsonl").open("a", encoding="utf-8") as prediction_inputs_fh,
+            (output_dir / "step_metrics.jsonl").open("a", encoding="utf-8") as step_metrics_fh,
             (output_dir / "benchmark.log").open("a", encoding="utf-8") as benchmark_log_fh,
         ):
             write_benchmark_log(
@@ -3743,6 +4162,7 @@ def main(argv: list[str] | None = None) -> int:
                             args,
                             calls_fh,
                             prediction_inputs_fh,
+                            step_metrics_fh,
                             benchmark_log_fh,
                         )
                     except Exception as exc:
@@ -3791,16 +4211,9 @@ def main(argv: list[str] | None = None) -> int:
                             "control_usable_rate": row["control_usable_rate"],
                             "strict_format_success_rate": row["strict_format_success_rate"],
                             "strict_control_usable_rate": row["strict_control_usable_rate"],
-                            "directional_control_usable_rate": row["directional_control_usable_rate"],
                             "relaxed_json_success_rate": row["relaxed_json_success_rate"],
                             "relaxed_control_usable_rate": row["relaxed_control_usable_rate"],
-                            "relaxed_directional_control_usable_rate": row[
-                                "relaxed_directional_control_usable_rate"
-                            ],
                             "repaired_control_usable_rate": row["repaired_control_usable_rate"],
-                            "repaired_directional_control_usable_rate": row[
-                                "repaired_directional_control_usable_rate"
-                            ],
                             "repair_applied_rate": row["repair_applied_rate"],
                             "online_control_mode": row["online_control_mode"],
                             "avg_queue_vehicles": row["avg_queue_vehicles"],

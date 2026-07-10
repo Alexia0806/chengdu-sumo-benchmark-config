@@ -1836,7 +1836,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--ngl", type=int, default=99)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--ctx-size", type=int, default=4096)
-    parser.add_argument("--n-predict", type=int, default=384)
+    parser.add_argument("--n-predict", type=int, default=512)
     parser.add_argument("--timeout-sec", type=int, default=600)
     parser.add_argument("--server-startup-sec", type=int, default=240)
     parser.add_argument("--openai-base-url", default=None)

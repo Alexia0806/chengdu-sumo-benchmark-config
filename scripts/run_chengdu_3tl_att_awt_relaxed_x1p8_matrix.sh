@@ -13,13 +13,10 @@ TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
 TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
 ONLINE_CONTROL_MODE="${ONLINE_CONTROL_MODE:-strict}"
-BASE_ONLINE_CONTROL_MODE="${BASE_ONLINE_CONTROL_MODE:-repaired}"
-BASE_DIRECTIONAL_CONTROL_MIN_DELTA_SEC="${BASE_DIRECTIONAL_CONTROL_MIN_DELTA_SEC:-5}"
-BASE_DIRECTIONAL_CONTROL_SATURATION_GAP="${BASE_DIRECTIONAL_CONTROL_SATURATION_GAP:-0.30}"
-BASE_DIRECTIONAL_CONTROL_GREEN_TOLERANCE_SEC="${BASE_DIRECTIONAL_CONTROL_GREEN_TOLERANCE_SEC:-10}"
+BASE_ONLINE_CONTROL_MODE="${BASE_ONLINE_CONTROL_MODE:-strict}"
 ACTION_DELAY_CYCLES="${ACTION_DELAY_CYCLES:-1}"
 DEEPSIGNAL_REASONING_MAX_CHARS="${DEEPSIGNAL_REASONING_MAX_CHARS:-160}"
-N_PREDICT="${N_PREDICT:-2048}"
+N_PREDICT="${N_PREDICT:-512}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-1800}"
 HF_DTYPE="${HF_DTYPE:-bfloat16}"
 HF_DEVICE_MAP="${HF_DEVICE_MAP:-auto}"
@@ -160,19 +157,13 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
     "reporting": {
       "strict_format_success_rate": "benchmark protocol compliance",
       "strict_control_usable_rate": "strict protocol + executable plan",
-      "directional_control_usable_rate": "strict executable plan + non-trivial saturation-aligned decision",
       "relaxed_json_success_rate": "JSON found without requiring protocol tags",
       "relaxed_control_usable_rate": "relaxed JSON already executable",
-      "relaxed_directional_control_usable_rate": "relaxed JSON executable + non-trivial saturation-aligned decision",
-      "repaired_control_usable_rate": "relaxed JSON executable after safe repair",
-      "repaired_directional_control_usable_rate": "repaired JSON executable + non-trivial saturation-aligned decision"
+      "repaired_control_usable_rate": "relaxed JSON executable after safe repair"
     }
   },
   "base_control_policy": {
     "online_control_mode": "$BASE_ONLINE_CONTROL_MODE",
-    "directional_control_min_delta_sec": $BASE_DIRECTIONAL_CONTROL_MIN_DELTA_SEC,
-    "directional_control_saturation_gap": $BASE_DIRECTIONAL_CONTROL_SATURATION_GAP,
-    "directional_control_green_tolerance_sec": $BASE_DIRECTIONAL_CONTROL_GREEN_TOLERANCE_SEC,
     "fail_policy": "keep_default"
   },
   "target_peak": {
@@ -224,9 +215,6 @@ run_hf_model_group() {
         --hf-skip-special-tokens \
         --temperature "$temp" \
         --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
-        --directional-control-min-delta-sec "$BASE_DIRECTIONAL_CONTROL_MIN_DELTA_SEC" \
-        --directional-control-saturation-gap "$BASE_DIRECTIONAL_CONTROL_SATURATION_GAP" \
-        --directional-control-green-tolerance-sec "$BASE_DIRECTIONAL_CONTROL_GREEN_TOLERANCE_SEC" \
         --model-fail-policy keep_default
     done
   done

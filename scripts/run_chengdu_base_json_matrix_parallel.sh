@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="/root/autodl-tmp/tsc-cycle-benchmark"
+BENCH_ROOT="$PROJECT_ROOT/DeepSignal-benchmark"
+RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_base_json_no_reasoning_20260618}"
+RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
+PYTHON_BIN="/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python"
+TEMPERATURE="${TEMPERATURE:-0.2}"
+TEMP_LABEL="${TEMP_LABEL:-temp02}"
+TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
+TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
+BASE_ONLINE_CONTROL_MODE="${BASE_ONLINE_CONTROL_MODE:-strict}"
+TLS_FILE="$RUN_ROOT/chengdu_3tl_tls.csv"
+LOG_DIR="$RUN_ROOT/logs"
+ORCH_LOG="$LOG_DIR/orchestrator.log"
+
+mkdir -p "$RUN_ROOT" "$LOG_DIR" "$RUN_ROOT/scripts"
+cp "$0" "$RUN_ROOT/scripts/$(basename "$0")"
+
+cat > "$TLS_FILE" <<'CSV'
+scenario,tl_id
+sumo_llm,J54
+sumo_llm,314655170
+sumo_llm,432452987
+CSV
+
+log_event() {
+  local msg="$1"
+  printf '[%s] %s\n' "$(date -Is)" "$msg" | tee -a "$ORCH_LOG"
+}
+
+run_case() {
+  local case_name="$1"
+  local demand_scale="$2"
+  shift 2
+  local out_dir="$RUN_ROOT/$case_name"
+  mkdir -p "$out_dir"
+  if [[ -f "$out_dir/per_tl.jsonl" ]] && [[ "$(wc -l < "$out_dir/per_tl.jsonl")" -ge 3 ]] && [[ ! -s "$out_dir/failures.jsonl" ]]; then
+    log_event "SKIP $case_name already_complete"
+    return
+  fi
+  log_event "START $case_name demand_scale=$demand_scale"
+  PYTHONUNBUFFERED=1 "$PYTHON_BIN" "$RUNNER" \
+    --benchmark-root "$BENCH_ROOT" \
+    --sumo-home /usr/share/sumo \
+    --scenario sumo_llm \
+    --tls-file "$TLS_FILE" \
+    --output-dir "$out_dir" \
+    --input-mode github_official \
+    --prompt-format deepsignal_json \
+    --no-prefill \
+    --warmup-seconds 300 \
+    --metric-seconds 1200 \
+    --decision-interval-seconds 60 \
+    --min-green 10 \
+    --max-green 90 \
+    --phase-queue-mode split-overlap \
+    --queue-threshold 10 \
+    --pred-wait-forecaster rolling_mean \
+    --demand-scale "$demand_scale" \
+    --target-peak-tl-id J54 \
+    --target-peak-tl-id 314655170 \
+    --target-peak-tl-id 432452987 \
+    --target-peak-vph-per-route "$TARGET_PEAK_VPH_PER_ROUTE" \
+    --target-peak-routes-per-tl "$TARGET_PEAK_ROUTES_PER_TL" \
+    --temperature "$TEMPERATURE" \
+    --model-fail-policy keep_default \
+    --continue-on-run-error \
+    "$@" 2>&1 | tee "$LOG_DIR/$case_name.console.log"
+  log_event "DONE $case_name"
+}
+
+run_model_matrix() {
+  local label="$1"
+  shift
+  for scale in 1.0 1.2 1.5; do
+    local tag="${scale/./p}"
+    run_case "${label}_${TEMP_LABEL}_x${tag}" "$scale" "$@"
+  done
+}
+
+log_event "ALL_START run_root=$RUN_ROOT temperature=$TEMPERATURE prompt_format=deepsignal_json base_online_control_mode=$BASE_ONLINE_CONTROL_MODE fail_policy=keep_default"
+
+run_model_matrix "base9b_hf_json" \
+  --controller model \
+  --model-backend hf \
+  --hf-model-path /root/autodl-tmp/models/Qwen3.5-9B-Base \
+  --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
+  --hf-dtype bfloat16 > "$LOG_DIR/base9b.group.log" 2>&1 &
+pid_9b=$!
+
+run_model_matrix "base4b_hf_json" \
+  --controller model \
+  --model-backend hf \
+  --hf-model-path /root/autodl-tmp/models/Qwen3-4B \
+  --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
+  --hf-use-chat-template \
+  --no-hf-chat-template-enable-thinking \
+  --hf-skip-special-tokens \
+  --hf-dtype bfloat16 > "$LOG_DIR/base4b.group.log" 2>&1 &
+pid_4b=$!
+
+if wait "$pid_9b"; then
+  status_9b=0
+else
+  status_9b=$?
+fi
+if wait "$pid_4b"; then
+  status_4b=0
+else
+  status_4b=$?
+fi
+
+python3 "$PROJECT_ROOT/scripts/summarize_chengdu_peak_matrix.py" "$RUN_ROOT" | tee "$RUN_ROOT/matrix_summary.md"
+log_event "ALL_DONE run_root=$RUN_ROOT status_9b=$status_9b status_4b=$status_4b"
+
+exit $((status_9b || status_4b))

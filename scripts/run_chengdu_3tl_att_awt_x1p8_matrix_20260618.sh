@@ -9,6 +9,7 @@ PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
 TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
+BASE_ONLINE_CONTROL_MODE="${BASE_ONLINE_CONTROL_MODE:-strict}"
 TLS_FILE="$RUN_ROOT/chengdu_3tl_tls.csv"
 LOG_DIR="$RUN_ROOT/logs"
 ORCH_LOG="$LOG_DIR/orchestrator.log"
@@ -96,14 +97,14 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
     "SUMO default",
     "Base 9B HF",
     "model-fp16-20260519.gguf",
-    "Base 4B + min_green fallback",
-    "Base 4B + first_min_green stress fallback"
+    "Base 4B + strict keep_default"
   ],
   "prompt_policy": {
-    "base_models_chat_template": false,
-    "lenient_json_extraction": false,
+    "base_models_chat_template": true,
+    "base_lenient_json_extraction": true,
     "prompt_format": "deepsignal",
-    "prefill": false
+    "prefill": false,
+    "base_online_control_mode": "$BASE_ONLINE_CONTROL_MODE"
   },
   "target_peak": {
     "vph_per_route_base": $TARGET_PEAK_VPH_PER_ROUTE,
@@ -139,7 +140,9 @@ for temp in 0.1 0.2 0.4; do
       --model-backend hf \
       --hf-model-path /root/autodl-tmp/models/Qwen3.5-9B-Base \
       --hf-dtype bfloat16 \
+      --prompt-format deepsignal_json \
       --temperature "$temp" \
+      --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
       --model-fail-policy keep_default
 
     run_case "03_model_fp16_20260519_${label}_x${tag}" "$scale" \
@@ -150,27 +153,24 @@ for temp in 0.1 0.2 0.4; do
       --ngl 99 \
       --threads 8 \
       --ctx-size 4096 \
-      --n-predict 384 \
+      --n-predict 512 \
       --timeout-sec 600 \
       --server-startup-sec 240 \
       --temperature "$temp" \
       --model-fail-policy keep_default
 
-    run_case "04_qwen3_4b_base_min_green_${label}_x${tag}" "$scale" \
+    run_case "04_qwen3_4b_base_${BASE_ONLINE_CONTROL_MODE}_${label}_x${tag}" "$scale" \
       --controller model \
       --model-backend hf \
       --hf-model-path /root/autodl-tmp/models/Qwen3-4B \
       --hf-dtype bfloat16 \
+      --prompt-format deepsignal_json \
+      --hf-use-chat-template \
+      --no-hf-chat-template-enable-thinking \
+      --hf-skip-special-tokens \
       --temperature "$temp" \
-      --model-fail-policy min_green
-
-    run_case "05_qwen3_4b_base_first_min_green_${label}_x${tag}" "$scale" \
-      --controller model \
-      --model-backend hf \
-      --hf-model-path /root/autodl-tmp/models/Qwen3-4B \
-      --hf-dtype bfloat16 \
-      --temperature "$temp" \
-      --model-fail-policy first_min_green
+      --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
+      --model-fail-policy keep_default
   done
 done
 

@@ -15,12 +15,9 @@ METRICS = [
     "control_usable_rate",
     "strict_format_success_rate",
     "strict_control_usable_rate",
-    "directional_control_usable_rate",
     "relaxed_json_success_rate",
     "relaxed_control_usable_rate",
-    "relaxed_directional_control_usable_rate",
     "repaired_control_usable_rate",
-    "repaired_directional_control_usable_rate",
     "repair_applied_rate",
     "plans_applied_rate",
     "fallback_plan_rate",
@@ -154,8 +151,8 @@ def main() -> int:
     print(f"- per_tl_csv: `{per_tl_csv_path}`")
     print(f"- cases: {len(summary_rows)}\n")
     print("## Aggregate")
-    print("| group | scale | TLs | applied control | fallback rate | strict control | directional control | relaxed dir control | repaired dir control | relaxed control | repaired control | response time | avg queue mean | delay mean | throughput mean | target ATT | target AWT | network ATT | network AWT | over-threshold sec mean | fallback mean | parse errors |")
-    print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    print("| group | scale | TLs | applied control | fallback rate | strict control | relaxed control | repaired control | response time | avg queue mean | delay mean | throughput mean | target ATT | target AWT | network ATT | network AWT | over-threshold sec mean | fallback mean | parse errors |")
+    print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for row in sorted(summary_rows, key=lambda item: (float(item["demand_scale"]), item["group"])):
         def fmt(value: Any) -> str:
             if value is None:
@@ -169,7 +166,7 @@ def main() -> int:
             return None
 
         print(
-            "| {group} | {scale} | {tls} | {applied_rate} | {fallback_rate} | {strict_control} | {directional_control} | {relaxed_directional_control} | {repaired_directional_control} | {relaxed_control} | {repaired_control} | {response_time} | {queue} | {delay} | {throughput} | {target_att} | {target_awt} | {network_att} | {network_awt} | {over} | {fallback} | {parse} |".format(
+            "| {group} | {scale} | {tls} | {applied_rate} | {fallback_rate} | {strict_control} | {relaxed_control} | {repaired_control} | {response_time} | {queue} | {delay} | {throughput} | {target_att} | {target_awt} | {network_att} | {network_awt} | {over} | {fallback} | {parse} |".format(
                 group=row["group"],
                 scale=row["demand_scale"],
                 tls=row["completed_tls"],
@@ -182,10 +179,7 @@ def main() -> int:
                     )
                 ),
                 relaxed_control=fmt(row.get("relaxed_control_usable_rate_mean")),
-                directional_control=fmt(row.get("directional_control_usable_rate_mean")),
-                relaxed_directional_control=fmt(row.get("relaxed_directional_control_usable_rate_mean")),
                 repaired_control=fmt(row.get("repaired_control_usable_rate_mean")),
-                repaired_directional_control=fmt(row.get("repaired_directional_control_usable_rate_mean")),
                 response_time=fmt(row.get("avg_response_time_sec_mean")),
                 queue=fmt(row.get("avg_queue_vehicles_mean")),
                 delay=fmt(row.get("avg_delay_per_vehicle_sec_mean")),
@@ -200,8 +194,8 @@ def main() -> int:
             )
         )
     print("\n## Per TL")
-    print("| group | scale | TL | applied control | fallback rate | strict control | directional control | repaired dir control | response time | avg queue | delay | throughput | target ATT | target AWT | network ATT | network AWT | fallback | parse errors |")
-    print("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    print("| group | scale | TL | applied control | fallback rate | strict control | response time | avg queue | delay | throughput | target ATT | target AWT | network ATT | network AWT | fallback | parse errors |")
+    print("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for row in sorted(tl_rows, key=lambda item: (float(item["demand_scale"]), item["group"], str(item.get("tl_id")))):
         def fmt_tl(value: Any) -> str:
             if value is None:
@@ -215,7 +209,7 @@ def main() -> int:
             return None
 
         print(
-            "| {group} | {scale} | {tl_id} | {applied_rate} | {fallback_rate} | {strict_control} | {directional_control} | {repaired_directional_control} | {response_time} | {queue} | {delay} | {throughput} | {target_att} | {target_awt} | {network_att} | {network_awt} | {fallback} | {parse} |".format(
+            "| {group} | {scale} | {tl_id} | {applied_rate} | {fallback_rate} | {strict_control} | {response_time} | {queue} | {delay} | {throughput} | {target_att} | {target_awt} | {network_att} | {network_awt} | {fallback} | {parse} |".format(
                 group=row["group"],
                 scale=row["demand_scale"],
                 tl_id=row.get("tl_id") or "-",
@@ -227,8 +221,6 @@ def main() -> int:
                         row.get("control_usable_rate"),
                     )
                 ),
-                directional_control=fmt_tl(row.get("directional_control_usable_rate")),
-                repaired_directional_control=fmt_tl(row.get("repaired_directional_control_usable_rate")),
                 response_time=fmt_tl(row.get("avg_response_time_sec")),
                 queue=fmt_tl(row.get("avg_queue_vehicles")),
                 delay=fmt_tl(row.get("avg_delay_per_vehicle_sec")),
