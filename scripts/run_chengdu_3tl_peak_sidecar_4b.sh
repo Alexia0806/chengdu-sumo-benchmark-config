@@ -14,6 +14,7 @@ WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
 METRIC_SECONDS="${METRIC_SECONDS:-1200}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
+TARGET_PEAK_ROUTE_SELECTION="${TARGET_PEAK_ROUTE_SELECTION:-$DEFAULT_TARGET_PEAK_ROUTE_SELECTION}"
 TLS_FILE="$RUN_ROOT/chengdu_3tl_tls.csv"
 LOG_DIR="$RUN_ROOT/logs"
 ORCH_LOG="$LOG_DIR/sidecar_4b.log"
@@ -70,6 +71,7 @@ run_case() {
     "${target_peak_args[@]}" \
     --target-peak-vph-per-route "$TARGET_PEAK_VPH_PER_ROUTE" \
     --target-peak-routes-per-tl "$TARGET_PEAK_ROUTES_PER_TL" \
+    --target-peak-route-selection "$TARGET_PEAK_ROUTE_SELECTION" \
     --temperature "$TEMPERATURE" \
     --continue-on-run-error \
     "$@" 2>&1 | tee "$LOG_DIR/$case_name.sidecar.console.log"

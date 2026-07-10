@@ -27,6 +27,7 @@ ACTION_DELAY_CYCLES="${ACTION_DELAY_CYCLES:-1}"
 MIN_GREEN="${MIN_GREEN:-10}"
 MAX_GREEN="${MAX_GREEN:-90}"
 QUEUE_THRESHOLDS="${QUEUE_THRESHOLDS:-10 20 30 40}"
+TARGET_PEAK_ROUTE_SELECTION="${TARGET_PEAK_ROUTE_SELECTION:-$DEFAULT_TARGET_PEAK_ROUTE_SELECTION}"
 N_PREDICT="${N_PREDICT:-1024}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-1800}"
 
@@ -126,6 +127,7 @@ write_experiment_matrix() {
   RUN_UNBALANCED_X15_FULL3TL="$RUN_UNBALANCED_X15_FULL3TL" TEMPERATURES="$TEMPERATURES" \
   RUN_ROOT="$RUN_ROOT" WARMUP_SECONDS="$WARMUP_SECONDS" METRIC_SECONDS="$METRIC_SECONDS" \
   TRIPINFO_DRAIN_SECONDS="$TRIPINFO_DRAIN_SECONDS" QUEUE_THRESHOLDS="$QUEUE_THRESHOLDS" \
+  TARGET_PEAK_ROUTE_SELECTION="$TARGET_PEAK_ROUTE_SELECTION" \
   "$PYTHON_BIN" - <<'PY' > "$RUN_ROOT/experiment_matrix.json"
 import json
 import os
@@ -159,6 +161,7 @@ payload = {
         "unbalanced": {"target_peak_vph_per_route_base": 480, "target_peak_routes_per_tl": 2},
     },
     "queue_thresholds": [int(x) for x in os.environ["QUEUE_THRESHOLDS"].split()],
+    "target_peak_route_selection": os.environ["TARGET_PEAK_ROUTE_SELECTION"],
 }
 print(json.dumps(payload, ensure_ascii=False, indent=2))
 PY
@@ -192,7 +195,7 @@ run_case() {
     target_peak_args+=(--target-peak-tl-id "$tl_id")
   done
 
-  log_event "START $case_name scenario=$scenario_name temp=$temp demand_scale=$demand_scale tls='$tls_list' target_peak_vph_per_route=$target_peak_vph_per_route target_peak_routes_per_tl=$target_peak_routes_per_tl"
+  log_event "START $case_name scenario=$scenario_name temp=$temp demand_scale=$demand_scale tls='$tls_list' target_peak_vph_per_route=$target_peak_vph_per_route target_peak_routes_per_tl=$target_peak_routes_per_tl target_peak_route_selection=$TARGET_PEAK_ROUTE_SELECTION"
   PYTHONUNBUFFERED=1 \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   HF_ATTN_IMPLEMENTATION=eager \
@@ -224,6 +227,7 @@ run_case() {
     "${target_peak_args[@]}" \
     --target-peak-vph-per-route "$target_peak_vph_per_route" \
     --target-peak-routes-per-tl "$target_peak_routes_per_tl" \
+    --target-peak-route-selection "$TARGET_PEAK_ROUTE_SELECTION" \
     --continue-on-run-error \
     --controller model \
     --model-backend hf \

@@ -155,6 +155,7 @@ Useful environment variables:
 - `RUNS_ROOT`: default parent for benchmark outputs.
 - `DEFAULT_TARGET_TLS`: default three-intersection matrix set; currently `cluster_4550018629_4550018932 cluster_432429373_5213238455 cluster_1916386555_432429395`.
 - `TARGET_TLS`: per-run override for matrix traffic-light IDs.
+- `TARGET_PEAK_ROUTE_SELECTION`: synthetic target-peak route selection policy; formal matrices default to `diverse_sources`.
 - `WARMUP_SECONDS` / `METRIC_SECONDS`: remote matrix runner window; the default `300 / 1200` reports the `300-1500s` metric interval.
 - `PYTHON_BIN`: Python executable used by remote launchers.
 - `LLAMA_SERVER`: llama.cpp server executable for GGUF workflows.

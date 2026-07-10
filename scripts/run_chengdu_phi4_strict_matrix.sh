@@ -18,6 +18,7 @@ WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
 METRIC_SECONDS="${METRIC_SECONDS:-1200}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
+TARGET_PEAK_ROUTE_SELECTION="${TARGET_PEAK_ROUTE_SELECTION:-$DEFAULT_TARGET_PEAK_ROUTE_SELECTION}"
 TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
 N_PREDICT="${N_PREDICT:-512}"
 HF_DTYPE="${HF_DTYPE:-bfloat16}"
@@ -159,6 +160,7 @@ run_case() {
     "${target_peak_args[@]}" \
     --target-peak-vph-per-route "$TARGET_PEAK_VPH_PER_ROUTE" \
     --target-peak-routes-per-tl "$TARGET_PEAK_ROUTES_PER_TL" \
+    --target-peak-route-selection "$TARGET_PEAK_ROUTE_SELECTION" \
     --continue-on-run-error \
     --controller model \
     --model-backend hf \
@@ -197,6 +199,7 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
   "target_peak": {
     "vph_per_route_base": $TARGET_PEAK_VPH_PER_ROUTE,
     "routes_per_tl": $TARGET_PEAK_ROUTES_PER_TL,
+    "route_selection": "$TARGET_PEAK_ROUTE_SELECTION",
     "max_demand_scale": 1.8
   },
   "queue_thresholds": [10, 20, 30, 40],

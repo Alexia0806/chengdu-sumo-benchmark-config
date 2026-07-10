@@ -14,6 +14,7 @@ WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
 METRIC_SECONDS="${METRIC_SECONDS:-1200}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
+TARGET_PEAK_ROUTE_SELECTION="${TARGET_PEAK_ROUTE_SELECTION:-$DEFAULT_TARGET_PEAK_ROUTE_SELECTION}"
 TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
 ONLINE_CONTROL_MODE="${ONLINE_CONTROL_MODE:-strict}"
 BASE_ONLINE_CONTROL_MODE="${BASE_ONLINE_CONTROL_MODE:-strict}"
@@ -94,7 +95,7 @@ run_case() {
     return 0
   fi
 
-  log_event "START $case_name demand_scale=$demand_scale target_peak_vph_per_route=$TARGET_PEAK_VPH_PER_ROUTE target_peak_routes_per_tl=$TARGET_PEAK_ROUTES_PER_TL tripinfo_drain=$TRIPINFO_DRAIN_SECONDS online_control_mode=$ONLINE_CONTROL_MODE base_online_control_mode=$BASE_ONLINE_CONTROL_MODE action_delay_cycles=$ACTION_DELAY_CYCLES n_predict=$N_PREDICT timeout_sec=$TIMEOUT_SEC"
+  log_event "START $case_name demand_scale=$demand_scale target_peak_vph_per_route=$TARGET_PEAK_VPH_PER_ROUTE target_peak_routes_per_tl=$TARGET_PEAK_ROUTES_PER_TL target_peak_route_selection=$TARGET_PEAK_ROUTE_SELECTION tripinfo_drain=$TRIPINFO_DRAIN_SECONDS online_control_mode=$ONLINE_CONTROL_MODE base_online_control_mode=$BASE_ONLINE_CONTROL_MODE action_delay_cycles=$ACTION_DELAY_CYCLES n_predict=$N_PREDICT timeout_sec=$TIMEOUT_SEC"
   PYTHONUNBUFFERED=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
     --sumo-home "$SUMO_HOME" \
@@ -122,6 +123,7 @@ run_case() {
     "${target_peak_args[@]}" \
     --target-peak-vph-per-route "$TARGET_PEAK_VPH_PER_ROUTE" \
     --target-peak-routes-per-tl "$TARGET_PEAK_ROUTES_PER_TL" \
+    --target-peak-route-selection "$TARGET_PEAK_ROUTE_SELECTION" \
     --n-predict "$N_PREDICT" \
     --timeout-sec "$TIMEOUT_SEC" \
     --continue-on-run-error \
@@ -178,6 +180,7 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
   "target_peak": {
     "vph_per_route_base": $TARGET_PEAK_VPH_PER_ROUTE,
     "routes_per_tl": $TARGET_PEAK_ROUTES_PER_TL,
+    "route_selection": "$TARGET_PEAK_ROUTE_SELECTION",
     "max_demand_scale": 1.8
   },
   "queue_thresholds": [10, 20, 30, 40],

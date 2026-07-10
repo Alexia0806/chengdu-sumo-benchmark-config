@@ -40,6 +40,7 @@ TEMPERATURE="${TEMPERATURE:-0.2}"
 DEMAND_SCALE="${DEMAND_SCALE:-1.2}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-480}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-2}"
+TARGET_PEAK_ROUTE_SELECTION="${TARGET_PEAK_ROUTE_SELECTION:-$DEFAULT_TARGET_PEAK_ROUTE_SELECTION}"
 DEEPSIGNAL_REASONING_MAX_CHARS="${DEEPSIGNAL_REASONING_MAX_CHARS:-160}"
 
 QWEN9B_PATH="${QWEN9B_PATH:-$MODELS_ROOT/Qwen3.5-9B-Base}"
@@ -119,6 +120,7 @@ write_experiment_matrix() {
   TRIPINFO_DRAIN_SECONDS="$TRIPINFO_DRAIN_SECONDS" QUEUE_THRESHOLDS="$QUEUE_THRESHOLDS" \
   TEMPERATURE="$TEMPERATURE" DEMAND_SCALE="$DEMAND_SCALE" \
   TARGET_PEAK_VPH_PER_ROUTE="$TARGET_PEAK_VPH_PER_ROUTE" TARGET_PEAK_ROUTES_PER_TL="$TARGET_PEAK_ROUTES_PER_TL" \
+  TARGET_PEAK_ROUTE_SELECTION="$TARGET_PEAK_ROUTE_SELECTION" \
   "$PYTHON_BIN" - <<'PY' > "$RUN_ROOT/experiment_matrix.json"
 import json
 import os
@@ -134,6 +136,7 @@ payload = {
     "demand_scale": float(os.environ["DEMAND_SCALE"]),
     "target_peak_vph_per_route": float(os.environ["TARGET_PEAK_VPH_PER_ROUTE"]),
     "target_peak_routes_per_tl": int(os.environ["TARGET_PEAK_ROUTES_PER_TL"]),
+    "target_peak_route_selection": os.environ["TARGET_PEAK_ROUTE_SELECTION"],
     "metric_windows_required": [
         {"label": "metric_300_900", "start": 300, "end": 900},
         {"label": "metric_300_1500", "start": 300, "end": 1500},
@@ -210,6 +213,7 @@ run_case() {
     "${target_peak_args[@]}" \
     --target-peak-vph-per-route "$TARGET_PEAK_VPH_PER_ROUTE" \
     --target-peak-routes-per-tl "$TARGET_PEAK_ROUTES_PER_TL" \
+    --target-peak-route-selection "$TARGET_PEAK_ROUTE_SELECTION" \
     --continue-on-run-error \
     "$@" 2>&1 | tee "$LOG_DIR/$case_name.console.log"
   log_event "DONE $case_name"
@@ -270,7 +274,7 @@ require_gpu
 
 log_event "RUN_START run_root=$RUN_ROOT bench_root=$BENCH_ROOT case_keys='$CASE_KEYS'"
 log_event "WINDOW warmup=$WARMUP_SECONDS metric=$METRIC_SECONDS drain=$TRIPINFO_DRAIN_SECONDS step_metrics=on windows='300:900 300:1500'"
-log_event "SCENARIO unbalanced_x1p2 demand_scale=$DEMAND_SCALE target_peak_vph_per_route=$TARGET_PEAK_VPH_PER_ROUTE target_peak_routes_per_tl=$TARGET_PEAK_ROUTES_PER_TL tls='$TARGET_TLS'"
+log_event "SCENARIO unbalanced_x1p2 demand_scale=$DEMAND_SCALE target_peak_vph_per_route=$TARGET_PEAK_VPH_PER_ROUTE target_peak_routes_per_tl=$TARGET_PEAK_ROUTES_PER_TL target_peak_route_selection=$TARGET_PEAK_ROUTE_SELECTION tls='$TARGET_TLS'"
 
 for case_key in $CASE_KEYS; do
   case "$case_key" in

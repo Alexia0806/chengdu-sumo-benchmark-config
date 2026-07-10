@@ -14,6 +14,7 @@ WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
 METRIC_SECONDS="${METRIC_SECONDS:-1200}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
+TARGET_PEAK_ROUTE_SELECTION="${TARGET_PEAK_ROUTE_SELECTION:-$DEFAULT_TARGET_PEAK_ROUTE_SELECTION}"
 BASE_ONLINE_CONTROL_MODE="${BASE_ONLINE_CONTROL_MODE:-strict}"
 TLS_FILE="$RUN_ROOT/chengdu_3tl_tls.csv"
 LOG_DIR="$RUN_ROOT/logs"
@@ -72,6 +73,7 @@ run_case() {
     "${target_peak_args[@]}" \
     --target-peak-vph-per-route "$TARGET_PEAK_VPH_PER_ROUTE" \
     --target-peak-routes-per-tl "$TARGET_PEAK_ROUTES_PER_TL" \
+    --target-peak-route-selection "$TARGET_PEAK_ROUTE_SELECTION" \
     --temperature "$TEMPERATURE" \
     --model-fail-policy keep_default \
     --continue-on-run-error \

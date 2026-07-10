@@ -43,6 +43,7 @@ MIN_GREEN="${MIN_GREEN:-10}"
 MAX_GREEN="${MAX_GREEN:-90}"
 DEEPSIGNAL_REASONING_MAX_CHARS="${DEEPSIGNAL_REASONING_MAX_CHARS:-160}"
 QUEUE_THRESHOLDS="${QUEUE_THRESHOLDS:-10 20 30 40}"
+TARGET_PEAK_ROUTE_SELECTION="${TARGET_PEAK_ROUTE_SELECTION:-$DEFAULT_TARGET_PEAK_ROUTE_SELECTION}"
 
 HF_DTYPE="${HF_DTYPE:-bfloat16}"
 HF_DEVICE_MAP="${HF_DEVICE_MAP:-auto}"
@@ -163,6 +164,7 @@ write_experiment_matrix() {
   DEFAULT_REUSE_POLICY="$DEFAULT_REUSE_POLICY" DEFAULT_REUSE_ROOTS="$DEFAULT_REUSE_ROOTS" \
   RUN_ROOT="$RUN_ROOT" WARMUP_SECONDS="$WARMUP_SECONDS" METRIC_SECONDS="$METRIC_SECONDS" \
   TRIPINFO_DRAIN_SECONDS="$TRIPINFO_DRAIN_SECONDS" QUEUE_THRESHOLDS="$QUEUE_THRESHOLDS" \
+  TARGET_PEAK_ROUTE_SELECTION="$TARGET_PEAK_ROUTE_SELECTION" \
   "$PYTHON_BIN" - <<'PY' > "$RUN_ROOT/experiment_matrix.json"
 import json
 import os
@@ -203,6 +205,7 @@ payload = {
         "tripinfo_drain_seconds": int(os.environ["TRIPINFO_DRAIN_SECONDS"]),
     },
     "queue_thresholds": [int(x) for x in os.environ["QUEUE_THRESHOLDS"].split()],
+    "target_peak_route_selection": os.environ["TARGET_PEAK_ROUTE_SELECTION"],
     "notes": [
         "SUMO default is not rerun by default; downstream aggregation should reuse matching existing default rows first.",
         "Unbalanced x1.5 defaults to the missing TL only, so it is a per-TL backfill for alignment with existing 2-TL runs.",
@@ -280,7 +283,7 @@ run_case() {
     target_peak_args+=(--target-peak-tl-id "$tl_id")
   done
 
-  log_event "START $case_name scenario=$scenario_name demand_scale=$demand_scale tls='$tls_list' target_peak_vph_per_route=$target_peak_vph_per_route target_peak_routes_per_tl=$target_peak_routes_per_tl dry_run=$DRY_RUN"
+  log_event "START $case_name scenario=$scenario_name demand_scale=$demand_scale tls='$tls_list' target_peak_vph_per_route=$target_peak_vph_per_route target_peak_routes_per_tl=$target_peak_routes_per_tl target_peak_route_selection=$TARGET_PEAK_ROUTE_SELECTION dry_run=$DRY_RUN"
   if [[ "$DRY_RUN" == "1" ]]; then
     log_event "DRY_RUN $case_name command='$PYTHON_BIN $RUNNER ...'"
     return 0
@@ -309,6 +312,7 @@ run_case() {
     "${target_peak_args[@]}" \
     --target-peak-vph-per-route "$target_peak_vph_per_route" \
     --target-peak-routes-per-tl "$target_peak_routes_per_tl" \
+    --target-peak-route-selection "$TARGET_PEAK_ROUTE_SELECTION" \
     --continue-on-run-error \
     "$@" 2>&1 | tee "$LOG_DIR/$case_name.console.log"
   log_event "DONE $case_name"
