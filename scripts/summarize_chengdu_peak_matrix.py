@@ -24,6 +24,9 @@ METRICS = [
     "avg_queue_vehicles",
     "p95_queue_vehicles",
     "max_queue_vehicles",
+    "avg_queue_length_vehicles",
+    "p95_queue_length_vehicles",
+    "max_queue_length_vehicles",
     "avg_delay_per_vehicle_sec",
     "throughput_veh_per_min",
     "queue_over_threshold_seconds",
@@ -151,7 +154,7 @@ def main() -> int:
     print(f"- per_tl_csv: `{per_tl_csv_path}`")
     print(f"- cases: {len(summary_rows)}\n")
     print("## Aggregate")
-    print("| group | scale | TLs | applied control | fallback rate | strict control | relaxed control | repaired control | response time | avg queue mean | delay mean | throughput mean | target ATT | target AWT | network ATT | network AWT | over-threshold sec mean | fallback mean | parse errors |")
+    print("| group | scale | TLs | applied control | fallback rate | strict control | relaxed control | repaired control | response time | queue length mean | delay mean | throughput mean | target ATT | target AWT | network ATT | network AWT | over-threshold sec mean | fallback mean | parse errors |")
     print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for row in sorted(summary_rows, key=lambda item: (float(item["demand_scale"]), item["group"])):
         def fmt(value: Any) -> str:
@@ -181,7 +184,12 @@ def main() -> int:
                 relaxed_control=fmt(row.get("relaxed_control_usable_rate_mean")),
                 repaired_control=fmt(row.get("repaired_control_usable_rate_mean")),
                 response_time=fmt(row.get("avg_response_time_sec_mean")),
-                queue=fmt(row.get("avg_queue_vehicles_mean")),
+                queue=fmt(
+                    first_non_none(
+                        row.get("avg_queue_length_vehicles_mean"),
+                        row.get("avg_queue_vehicles_mean"),
+                    )
+                ),
                 delay=fmt(row.get("avg_delay_per_vehicle_sec_mean")),
                 throughput=fmt(row.get("throughput_veh_per_min_mean")),
                 target_att=fmt(row.get("target_tl_att_sec_mean")),
@@ -194,7 +202,7 @@ def main() -> int:
             )
         )
     print("\n## Per TL")
-    print("| group | scale | TL | applied control | fallback rate | strict control | response time | avg queue | delay | throughput | target ATT | target AWT | network ATT | network AWT | fallback | parse errors |")
+    print("| group | scale | TL | applied control | fallback rate | strict control | response time | queue length | delay | throughput | target ATT | target AWT | network ATT | network AWT | fallback | parse errors |")
     print("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for row in sorted(tl_rows, key=lambda item: (float(item["demand_scale"]), item["group"], str(item.get("tl_id")))):
         def fmt_tl(value: Any) -> str:
@@ -222,7 +230,12 @@ def main() -> int:
                     )
                 ),
                 response_time=fmt_tl(row.get("avg_response_time_sec")),
-                queue=fmt_tl(row.get("avg_queue_vehicles")),
+                queue=fmt_tl(
+                    first_non_none_tl(
+                        row.get("avg_queue_length_vehicles"),
+                        row.get("avg_queue_vehicles"),
+                    )
+                ),
                 delay=fmt_tl(row.get("avg_delay_per_vehicle_sec")),
                 throughput=fmt_tl(row.get("throughput_veh_per_min")),
                 target_att=fmt_tl(row.get("target_tl_att_sec")),
