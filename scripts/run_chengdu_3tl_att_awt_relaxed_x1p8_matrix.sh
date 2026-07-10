@@ -4,11 +4,11 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
 PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
-RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_att_awt_relaxed_nochat_thinking_x1p8_no_x1p0_temp0102_$(date +%Y%m%d)}"
+RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_att_awt_relaxed_nochat_thinking_x1p2_x1p5_temp02_$(date +%Y%m%d)}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
 PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
-DEMAND_SCALES="${DEMAND_SCALES:-1.2 1.5 1.8}"
-TEMPERATURES="${TEMPERATURES:-0.1 0.2}"
+DEMAND_SCALES="${DEMAND_SCALES:-1.2 1.5}"
+TEMPERATURES="${TEMPERATURES:-0.2}"
 FORMAL_TARGET_TLS="cluster_4550018629_4550018932 cluster_432429373_5213238455 cluster_1916386555_432429395"
 TARGET_TLS="${TARGET_TLS:-${DEFAULT_TARGET_TLS:-$FORMAL_TARGET_TLS}}"
 WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
@@ -60,6 +60,32 @@ import json
 import os
 
 print(json.dumps(os.environ["TARGET_TLS"].split()))
+PY
+)"
+
+DEMAND_SCALES_JSON="$(
+  DEMAND_SCALES="$DEMAND_SCALES" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps([float(value) for value in os.environ["DEMAND_SCALES"].split()]))
+PY
+)"
+
+TEMPERATURES_JSON="$(
+  TEMPERATURES="$TEMPERATURES" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps([float(value) for value in os.environ["TEMPERATURES"].split()]))
+PY
+)"
+
+MAX_DEMAND_SCALE="$(
+  DEMAND_SCALES="$DEMAND_SCALES" python3 - <<'PY'
+import os
+
+print(max(float(value) for value in os.environ["DEMAND_SCALES"].split()))
 PY
 )"
 
@@ -150,8 +176,8 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
 {
   "run_root": "$RUN_ROOT",
   "tls": $TARGET_TLS_JSON,
-  "demand_scales": [1.2, 1.5, 1.8],
-  "temperatures": [0.1, 0.2],
+  "demand_scales": $DEMAND_SCALES_JSON,
+  "temperatures": $TEMPERATURES_JSON,
   "metric_window": {
     "warmup_seconds": $WARMUP_SECONDS,
     "metric_seconds": $METRIC_SECONDS,
@@ -196,7 +222,7 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
     "vph_per_route_base": $TARGET_PEAK_VPH_PER_ROUTE,
     "routes_per_tl": $TARGET_PEAK_ROUTES_PER_TL,
     "route_selection": "$TARGET_PEAK_ROUTE_SELECTION",
-    "max_demand_scale": 1.8
+    "max_demand_scale": $MAX_DEMAND_SCALE
   },
   "queue_thresholds": [10, 20, 30, 40],
   "tripinfo": {
