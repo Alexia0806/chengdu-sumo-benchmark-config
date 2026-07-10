@@ -20,6 +20,7 @@ TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
 ONLINE_CONTROL_MODE="${ONLINE_CONTROL_MODE:-strict}"
 BASE_ONLINE_CONTROL_MODE="${BASE_ONLINE_CONTROL_MODE:-strict}"
 ACTION_DELAY_CYCLES="${ACTION_DELAY_CYCLES:-1}"
+ALLOW_NONSTANDARD_WINDOW="${ALLOW_NONSTANDARD_WINDOW:-0}"
 DEEPSIGNAL_REASONING_MAX_CHARS="${DEEPSIGNAL_REASONING_MAX_CHARS:-160}"
 N_PREDICT="${N_PREDICT:-512}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-1800}"
@@ -67,6 +68,11 @@ for tl_id in $TARGET_TLS; do
   target_peak_args+=(--target-peak-tl-id "$tl_id")
 done
 
+window_args=()
+if [[ "$ALLOW_NONSTANDARD_WINDOW" == "1" ]]; then
+  window_args+=(--allow-nonstandard-window)
+fi
+
 log_event() {
   local msg="$1"
   printf '[%s] %s\n' "$(date -Is)" "$msg" | tee -a "$ORCH_LOG"
@@ -97,6 +103,7 @@ run_case() {
   fi
 
   log_event "START $case_name demand_scale=$demand_scale target_peak_vph_per_route=$TARGET_PEAK_VPH_PER_ROUTE target_peak_routes_per_tl=$TARGET_PEAK_ROUTES_PER_TL target_peak_route_selection=$TARGET_PEAK_ROUTE_SELECTION tripinfo_drain=$TRIPINFO_DRAIN_SECONDS online_control_mode=$ONLINE_CONTROL_MODE base_online_control_mode=$BASE_ONLINE_CONTROL_MODE action_delay_cycles=$ACTION_DELAY_CYCLES n_predict=$N_PREDICT timeout_sec=$TIMEOUT_SEC"
+  set +e
   PYTHONUNBUFFERED=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
     --sumo-home "$SUMO_HOME" \
@@ -109,6 +116,7 @@ run_case() {
     --online-control-mode "$ONLINE_CONTROL_MODE" \
     --warmup-seconds "$WARMUP_SECONDS" \
     --metric-seconds "$METRIC_SECONDS" \
+    "${window_args[@]}" \
     --decision-interval-seconds 60 \
     --action-delay-cycles "$ACTION_DELAY_CYCLES" \
     --min-green 10 \
@@ -129,6 +137,12 @@ run_case() {
     --timeout-sec "$TIMEOUT_SEC" \
     --continue-on-run-error \
     "$@" 2>&1 | tee "$LOG_DIR/$case_name.console.log"
+  local rc="${PIPESTATUS[0]}"
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    log_event "FAIL $case_name rc=$rc"
+    return "$rc"
+  fi
   log_event "DONE $case_name"
 }
 
@@ -201,7 +215,7 @@ run_default_group() {
     tag="$(scale_tag "$scale")"
     run_case "00_default_sumo_x${tag}" "$scale" \
       --controller fixed \
-      --input-mode legacy_snapshot
+      --input-mode legacy_snapshot || return $?
   done
 }
 
@@ -228,7 +242,7 @@ run_hf_model_group() {
         --hf-skip-special-tokens \
         --temperature "$temp" \
         --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
-        --model-fail-policy keep_default
+        --model-fail-policy keep_default || return $?
     done
   done
   log_event "GROUP_DONE $group_name"
