@@ -106,9 +106,9 @@ Run a small fixed-controller local smoke, assuming SUMO/TraCI is available:
 python3 scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py \
   --benchmark-root chengdu_benchmark \
   --scenario sumo_llm \
-  --tl-id J54 \
+  --tl-id cluster_4550018629_4550018932 \
   --controller fixed \
-  --output-dir runs/local_fixed_j54_smoke \
+  --output-dir runs/local_fixed_cluster_smoke \
   --warmup-seconds 10 \
   --metric-seconds 20 \
   --allow-nonstandard-window
@@ -120,13 +120,13 @@ Run a Hugging Face model-backed case:
 python3 scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py \
   --benchmark-root chengdu_benchmark \
   --scenario sumo_llm \
-  --tl-id J54 \
+  --tl-id cluster_4550018629_4550018932 \
   --controller model \
   --model-backend hf \
   --hf-model-path /path/to/model \
   --prompt-format deepsignal_json \
   --online-control-mode strict \
-  --output-dir runs/local_hf_j54
+  --output-dir runs/local_hf_cluster
 ```
 
 Remote matrix scripts live under `scripts/run_*.sh`. They source `scripts/env_defaults.sh`, which derives path defaults from `AUTODL_ROOT`, `PROJECT_ROOT`, `MODELS_ROOT`, `RUNS_ROOT`, `SUMO_HOME`, and backend-specific variables. Override those variables before invoking a launcher when running outside the original AutoDL layout.
@@ -153,6 +153,9 @@ Useful environment variables:
 - `PROJECT_ROOT`: remote shell-script repository root.
 - `MODELS_ROOT`: local directory containing model checkpoints.
 - `RUNS_ROOT`: default parent for benchmark outputs.
+- `DEFAULT_TARGET_TLS`: default three-intersection matrix set; currently `cluster_4550018629_4550018932 cluster_432429373_5213238455 cluster_1916386555_432429395`.
+- `TARGET_TLS`: per-run override for matrix traffic-light IDs.
+- `WARMUP_SECONDS` / `METRIC_SECONDS`: remote matrix runner window; the default `300 / 1200` reports the `300-1500s` metric interval.
 - `PYTHON_BIN`: Python executable used by remote launchers.
 - `LLAMA_SERVER`: llama.cpp server executable for GGUF workflows.
 - `HF_ATTN_IMPLEMENTATION` / `HF_EXPERTS_IMPLEMENTATION`: optional Hugging Face loading knobs used by the metrics runner.

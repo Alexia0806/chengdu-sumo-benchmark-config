@@ -16,8 +16,8 @@ ORCH_LOG="$LOG_DIR/orchestrator.log"
 
 SCENARIOS="${SCENARIOS:-unbalanced_x1p5 balanced_x1p5 balanced_x1p2 unbalanced_x1p2}"
 TEMPERATURES="${TEMPERATURES:-0.1 0.2}"
-TARGET_TLS="${TARGET_TLS:-J54 314655170 432452987}"
-UNBALANCED_X15_TLS="${UNBALANCED_X15_TLS:-314655170}"
+TARGET_TLS="${TARGET_TLS:-$DEFAULT_TARGET_TLS}"
+UNBALANCED_X15_TLS="${UNBALANCED_X15_TLS:-$DEFAULT_UNBALANCED_X15_TLS}"
 RUN_UNBALANCED_X15_FULL3TL="${RUN_UNBALANCED_X15_FULL3TL:-0}"
 WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
 METRIC_SECONDS="${METRIC_SECONDS:-1200}"
@@ -58,7 +58,7 @@ scenario_label() {
       if [[ "$RUN_UNBALANCED_X15_FULL3TL" == "1" ]]; then
         echo "unbalanced_full3tl"
       else
-        echo "unbalanced_missing314655170"
+        echo "unbalanced_subset"
       fi
       ;;
     unbalanced_x1p2) echo "unbalanced" ;;

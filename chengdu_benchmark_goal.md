@@ -157,7 +157,7 @@ Only expand after smoke passes control-rate checks.
 
 Recommended next full matrix:
 
-- Intersections: `J54`, `314655170`, `432452987`
+- Intersections: `cluster_4550018629_4550018932`, `cluster_432429373_5213238455`, `cluster_1916386555_432429395`
 - Scales: `1.0`, `1.2`, `1.5`, `1.8`
 - Temperatures: keep unified at `0.1` unless explicitly testing temperature sensitivity
 - Prompt/control: start with `deepsignal_solution_first` and `online_control_mode=repaired`

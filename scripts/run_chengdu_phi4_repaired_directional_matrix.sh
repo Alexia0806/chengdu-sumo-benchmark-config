@@ -13,6 +13,9 @@ MODEL_PATH="${MODEL_PATH:-/dev/shm/phi-4}"
 MODEL_LABEL="${MODEL_LABEL:-phi4}"
 HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 MODEL_MIN_FREE_GB="${MODEL_MIN_FREE_GB:-35}"
+TARGET_TLS="${TARGET_TLS:-$DEFAULT_TARGET_TLS}"
+WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
+METRIC_SECONDS="${METRIC_SECONDS:-1200}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
 TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
@@ -24,17 +27,32 @@ HF_CHAT_TEMPLATE_MESSAGE_MODE="${HF_CHAT_TEMPLATE_MESSAGE_MODE:-split_system_use
 TLS_FILE="$RUN_ROOT/chengdu_3tl_tls.csv"
 LOG_DIR="$RUN_ROOT/logs"
 ORCH_LOG="$LOG_DIR/orchestrator.log"
+EXPECTED_TL_COUNT="$(wc -w <<< "$TARGET_TLS" | tr -d ' ')"
 
 mkdir -p "$RUN_ROOT" "$LOG_DIR" "$RUN_ROOT/scripts" "$(dirname "$MODEL_PATH")"
 cp "$0" "$RUN_ROOT/scripts/$(basename "$0")" 2>/dev/null || true
 echo "$$" > "$RUN_ROOT/orchestrator.pid"
 
-cat > "$TLS_FILE" <<'CSV'
-scenario,tl_id
-sumo_llm,J54
-sumo_llm,314655170
-sumo_llm,432452987
-CSV
+{
+  echo "scenario,tl_id"
+  for tl_id in $TARGET_TLS; do
+    echo "sumo_llm,$tl_id"
+  done
+} > "$TLS_FILE"
+
+TARGET_TLS_JSON="$(
+  TARGET_TLS="$TARGET_TLS" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps(os.environ["TARGET_TLS"].split()))
+PY
+)"
+
+target_peak_args=()
+for tl_id in $TARGET_TLS; do
+  target_peak_args+=(--target-peak-tl-id "$tl_id")
+done
 
 log_event() {
   printf '[%s] %s\n' "$(date -Is)" "$1" | tee -a "$ORCH_LOG"
@@ -110,7 +128,7 @@ run_case() {
   local temperature="$3"
   local out_dir="$RUN_ROOT/$case_name"
   mkdir -p "$out_dir"
-  if [[ -f "$out_dir/per_tl.jsonl" ]] && [[ "$(wc -l < "$out_dir/per_tl.jsonl")" -ge 3 ]] && [[ ! -s "$out_dir/failures.jsonl" ]]; then
+  if [[ -f "$out_dir/per_tl.jsonl" ]] && [[ "$(wc -l < "$out_dir/per_tl.jsonl")" -ge "$EXPECTED_TL_COUNT" ]] && [[ ! -s "$out_dir/failures.jsonl" ]]; then
     log_event "SKIP $case_name already_complete"
     return 0
   fi
@@ -126,8 +144,8 @@ run_case() {
     --prompt-format "$PROMPT_FORMAT" \
     --no-prefill \
     --online-control-mode "$ONLINE_CONTROL_MODE" \
-    --warmup-seconds 300 \
-    --metric-seconds 1200 \
+    --warmup-seconds "$WARMUP_SECONDS" \
+    --metric-seconds "$METRIC_SECONDS" \
     --decision-interval-seconds 60 \
     --min-green 10 \
     --max-green 90 \
@@ -138,9 +156,7 @@ run_case() {
     --tripinfo-drain-seconds "$TRIPINFO_DRAIN_SECONDS" \
     --pred-wait-forecaster rolling_mean \
     --demand-scale "$demand_scale" \
-    --target-peak-tl-id J54 \
-    --target-peak-tl-id 314655170 \
-    --target-peak-tl-id 432452987 \
+    "${target_peak_args[@]}" \
     --target-peak-vph-per-route "$TARGET_PEAK_VPH_PER_ROUTE" \
     --target-peak-routes-per-tl "$TARGET_PEAK_ROUTES_PER_TL" \
     --continue-on-run-error \
@@ -165,7 +181,7 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
 {
   "run_root": "$RUN_ROOT",
   "purpose": "Chengdu 3-TL $MODEL_LABEL experiment matrix with $PROMPT_FORMAT prompt, HF chat template, $ONLINE_CONTROL_MODE online control, and keep-default fail policy",
-  "tls": ["J54", "314655170", "432452987"],
+  "tls": $TARGET_TLS_JSON,
   "demand_scales": [1.0, 1.2, 1.5, 1.8],
   "temperatures": [0.1, 0.2, 0.4],
   "hf_repo": "$HF_REPO",

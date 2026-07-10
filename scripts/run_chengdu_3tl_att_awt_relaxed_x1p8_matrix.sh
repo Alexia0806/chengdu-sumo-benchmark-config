@@ -9,7 +9,9 @@ RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
 PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 DEMAND_SCALES="${DEMAND_SCALES:-1.2 1.5 1.8}"
 TEMPERATURES="${TEMPERATURES:-0.1 0.2}"
-TARGET_TLS="${TARGET_TLS:-J54 314655170 432452987}"
+TARGET_TLS="${TARGET_TLS:-$DEFAULT_TARGET_TLS}"
+WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
+METRIC_SECONDS="${METRIC_SECONDS:-1200}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
 TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
@@ -103,8 +105,8 @@ run_case() {
     --prompt-format deepsignal \
     --no-prefill \
     --online-control-mode "$ONLINE_CONTROL_MODE" \
-    --warmup-seconds 300 \
-    --metric-seconds 1200 \
+    --warmup-seconds "$WARMUP_SECONDS" \
+    --metric-seconds "$METRIC_SECONDS" \
     --decision-interval-seconds 60 \
     --action-delay-cycles "$ACTION_DELAY_CYCLES" \
     --min-green 10 \
@@ -133,6 +135,12 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
   "tls": $TARGET_TLS_JSON,
   "demand_scales": [1.2, 1.5, 1.8],
   "temperatures": [0.1, 0.2],
+  "metric_window": {
+    "warmup_seconds": $WARMUP_SECONDS,
+    "metric_seconds": $METRIC_SECONDS,
+    "metric_start_second": $WARMUP_SECONDS,
+    "metric_end_second": $((WARMUP_SECONDS + METRIC_SECONDS))
+  },
   "excluded_model_groups": ["Fine-tuned 9B", "model-fp16-20260519.gguf", "first_min_green"],
   "model_groups": [
     "SUMO default",

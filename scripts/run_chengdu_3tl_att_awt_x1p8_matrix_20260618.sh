@@ -7,6 +7,9 @@ BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_att_awt_targetpeak_x1p8_20260618}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
 PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
+TARGET_TLS="${TARGET_TLS:-$DEFAULT_TARGET_TLS}"
+WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
+METRIC_SECONDS="${METRIC_SECONDS:-1200}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
 TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
@@ -14,17 +17,32 @@ BASE_ONLINE_CONTROL_MODE="${BASE_ONLINE_CONTROL_MODE:-strict}"
 TLS_FILE="$RUN_ROOT/chengdu_3tl_tls.csv"
 LOG_DIR="$RUN_ROOT/logs"
 ORCH_LOG="$LOG_DIR/orchestrator.log"
+EXPECTED_TL_COUNT="$(wc -w <<< "$TARGET_TLS" | tr -d ' ')"
 
 mkdir -p "$RUN_ROOT" "$LOG_DIR" "$RUN_ROOT/scripts"
 cp "$0" "$RUN_ROOT/scripts/$(basename "$0")"
 echo "$$" > "$RUN_ROOT/orchestrator.pid"
 
-cat > "$TLS_FILE" <<'CSV'
-scenario,tl_id
-sumo_llm,J54
-sumo_llm,314655170
-sumo_llm,432452987
-CSV
+{
+  echo "scenario,tl_id"
+  for tl_id in $TARGET_TLS; do
+    echo "sumo_llm,$tl_id"
+  done
+} > "$TLS_FILE"
+
+TARGET_TLS_JSON="$(
+  TARGET_TLS="$TARGET_TLS" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps(os.environ["TARGET_TLS"].split()))
+PY
+)"
+
+target_peak_args=()
+for tl_id in $TARGET_TLS; do
+  target_peak_args+=(--target-peak-tl-id "$tl_id")
+done
 
 log_event() {
   local msg="$1"
@@ -50,7 +68,7 @@ run_case() {
   shift 2
   local out_dir="$RUN_ROOT/$case_name"
   mkdir -p "$out_dir"
-  if [[ -f "$out_dir/per_tl.jsonl" ]] && [[ "$(wc -l < "$out_dir/per_tl.jsonl")" -ge 3 ]] && [[ ! -s "$out_dir/failures.jsonl" ]]; then
+  if [[ -f "$out_dir/per_tl.jsonl" ]] && [[ "$(wc -l < "$out_dir/per_tl.jsonl")" -ge "$EXPECTED_TL_COUNT" ]] && [[ ! -s "$out_dir/failures.jsonl" ]]; then
     log_event "SKIP $case_name already_complete"
     return 0
   fi
@@ -65,8 +83,8 @@ run_case() {
     --input-mode github_official \
     --prompt-format deepsignal \
     --no-prefill \
-    --warmup-seconds 300 \
-    --metric-seconds 1200 \
+    --warmup-seconds "$WARMUP_SECONDS" \
+    --metric-seconds "$METRIC_SECONDS" \
     --decision-interval-seconds 60 \
     --min-green 10 \
     --max-green 90 \
@@ -77,9 +95,7 @@ run_case() {
     --tripinfo-drain-seconds "$TRIPINFO_DRAIN_SECONDS" \
     --pred-wait-forecaster rolling_mean \
     --demand-scale "$demand_scale" \
-    --target-peak-tl-id J54 \
-    --target-peak-tl-id 314655170 \
-    --target-peak-tl-id 432452987 \
+    "${target_peak_args[@]}" \
     --target-peak-vph-per-route "$TARGET_PEAK_VPH_PER_ROUTE" \
     --target-peak-routes-per-tl "$TARGET_PEAK_ROUTES_PER_TL" \
     --continue-on-run-error \
@@ -90,9 +106,15 @@ run_case() {
 cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
 {
   "run_root": "$RUN_ROOT",
-  "tls": ["J54", "314655170", "432452987"],
+  "tls": $TARGET_TLS_JSON,
   "demand_scales": [1.0, 1.2, 1.5, 1.8],
   "temperatures": [0.1, 0.2, 0.4],
+  "metric_window": {
+    "warmup_seconds": $WARMUP_SECONDS,
+    "metric_seconds": $METRIC_SECONDS,
+    "metric_start_second": $WARMUP_SECONDS,
+    "metric_end_second": $((WARMUP_SECONDS + METRIC_SECONDS))
+  },
   "excluded_model_groups": ["Fine-tuned 9B / 01_9b_adapter"],
   "model_groups": [
     "SUMO default",
@@ -122,7 +144,7 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
 JSON
 
 log_event "RUN_START run_root=$RUN_ROOT"
-log_event "MATRIX tls=J54,314655170,432452987 scales=1.0,1.2,1.5,1.8 temps=0.1,0.2,0.4 excluded=Fine-tuned_9B queue_thresholds=10,20,30,40"
+log_event "MATRIX tls=$TARGET_TLS scales=1.0,1.2,1.5,1.8 temps=0.1,0.2,0.4 excluded=Fine-tuned_9B queue_thresholds=10,20,30,40"
 
 for scale in 1.0 1.2 1.5 1.8; do
   tag="$(scale_tag "$scale")"
