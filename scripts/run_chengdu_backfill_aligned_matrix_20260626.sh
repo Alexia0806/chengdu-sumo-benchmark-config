@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 if [[ -z "${BENCH_ROOT:-}" ]]; then
   if [[ -d "$PROJECT_ROOT/chengdu_benchmark" ]]; then
-    BENCH_ROOT="$PROJECT_ROOT/chengdu_benchmark"
+    BENCH_ROOT="${BENCH_ROOT:-$PROJECT_ROOT/chengdu_benchmark}"
   else
-    BENCH_ROOT="$PROJECT_ROOT/DeepSignal-benchmark"
+    BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
   fi
 fi
 RUNNER="${RUNNER:-$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py}"
 SUMMARIZER="${SUMMARIZER:-$PROJECT_ROOT/scripts/summarize_chengdu_peak_matrix.py}"
-PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
   PYTHON_BIN="python3"
 fi
@@ -29,7 +30,7 @@ SCENARIOS="${SCENARIOS:-unbalanced_x1p5 balanced_x1p5 balanced_x1p2 unbalanced_x
 MODEL_KEYS="${MODEL_KEYS:-fp16 phi4 gemma12 qwen9b qwen4b}"
 RUN_DEFAULT="${RUN_DEFAULT:-0}"
 DEFAULT_REUSE_POLICY="${DEFAULT_REUSE_POLICY:-prefer_existing}"
-DEFAULT_REUSE_ROOTS="${DEFAULT_REUSE_ROOTS:-/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_3tl_min10_targetpeak_20260617 /root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_3tl_unbalanced_peak_x1p5_temp01_20260617 /root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_3tl_unbalanced_peak_x1p5_temp02_20260617 /root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_3tl_unbalanced_peak_x1p5_temp04_20260617}"
+DEFAULT_REUSE_ROOTS="${DEFAULT_REUSE_ROOTS:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_min10_targetpeak_20260617 $PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_unbalanced_peak_x1p5_temp01_20260617 $PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_unbalanced_peak_x1p5_temp02_20260617 $PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_unbalanced_peak_x1p5_temp04_20260617}"
 DRY_RUN="${DRY_RUN:-0}"
 MISSING_MODEL_POLICY="${MISSING_MODEL_POLICY:-skip}"
 
@@ -54,13 +55,13 @@ PHI4_TIMEOUT_SEC="${PHI4_TIMEOUT_SEC:-600}"
 FP16_N_PREDICT="${FP16_N_PREDICT:-512}"
 FP16_TIMEOUT_SEC="${FP16_TIMEOUT_SEC:-1800}"
 
-QWEN36_PATH="${QWEN36_PATH:-/root/autodl-tmp/models/Qwen3.6-27B}"
-QWEN4B_PATH="${QWEN4B_PATH:-/root/autodl-tmp/models/Qwen3-4B}"
-QWEN9B_PATH="${QWEN9B_PATH:-/root/autodl-tmp/models/Qwen3.5-9B-Base}"
-GEMMA12_PATH="${GEMMA12_PATH:-/root/autodl-tmp/models/gemma-3-12b-it}"
-PHI4_PATH="${PHI4_PATH:-/root/autodl-tmp/models/phi-4}"
-FP16_GGUF_PATH="${FP16_GGUF_PATH:-/root/autodl-tmp/models/model-fp16-20260519.gguf}"
-LLAMA_SERVER="${LLAMA_SERVER:-/root/autodl-tmp/llama.cpp.vendor/build-cuda/bin/llama-server}"
+QWEN36_PATH="${QWEN36_PATH:-$MODELS_ROOT/Qwen3.6-27B}"
+QWEN4B_PATH="${QWEN4B_PATH:-$MODELS_ROOT/Qwen3-4B}"
+QWEN9B_PATH="${QWEN9B_PATH:-$MODELS_ROOT/Qwen3.5-9B-Base}"
+GEMMA12_PATH="${GEMMA12_PATH:-$MODELS_ROOT/gemma-3-12b-it}"
+PHI4_PATH="${PHI4_PATH:-$MODELS_ROOT/phi-4}"
+FP16_GGUF_PATH="${FP16_GGUF_PATH:-$MODELS_ROOT/model-fp16-20260519.gguf}"
+LLAMA_SERVER="${LLAMA_SERVER:-$LLAMA_CPP_ROOT/build-cuda/bin/llama-server}"
 
 mkdir -p "$RUN_ROOT" "$LOG_DIR" "$TLS_DIR" "$RUN_ROOT/scripts"
 cp "$0" "$RUN_ROOT/scripts/$(basename "$0")" 2>/dev/null || true
@@ -287,7 +288,7 @@ run_case() {
 
   PYTHONUNBUFFERED=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
-    --sumo-home /usr/share/sumo \
+    --sumo-home "$SUMO_HOME" \
     --scenario sumo_llm \
     --tls-file "$tls_file" \
     --output-dir "$out_dir" \

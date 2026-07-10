@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 RUNNER_SH="${RUNNER_SH:-$PROJECT_ROOT/scripts/run_chengdu_backfill_aligned_matrix_20260626.sh}"
-PYTHON_BIN="${PYTHON_BIN:-/root/miniconda3/bin/python3.12}"
-MODEL_DIR="${MODEL_DIR:-/root/autodl-tmp/models/Qwen3.6-27B}"
+PYTHON_BIN="${PYTHON_BIN:-$SYSTEM_PYTHON_BIN}"
+MODEL_DIR="${MODEL_DIR:-$MODELS_ROOT/Qwen3.6-27B}"
 QUEUE_ROOT="${QUEUE_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_qwen36_backfill_wait_queue_20260626_$(date +%Y%m%dT%H%M%S)}"
 LOG_DIR="$QUEUE_ROOT/logs"
 WAIT_LOG="$LOG_DIR/wait_qwen36_complete.log"

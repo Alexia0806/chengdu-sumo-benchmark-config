@@ -30,7 +30,7 @@
 
 ## Operational Scripts
 
-`scripts/run_*.sh`, `scripts/watch_*.sh`, `run_gpt_oss_20b_2tl_unbalanced_x1p5*.sh`, and `watch_gpt_oss_20b_solution.sh` are AutoDL-oriented launch/watch helpers for recorded Chengdu experiment workflows. Most default paths are remote paths under `/root/autodl-tmp/` and should be overridden through environment variables when used elsewhere.
+`scripts/run_*.sh`, `scripts/watch_*.sh`, `run_gpt_oss_20b_2tl_unbalanced_x1p5*.sh`, and `watch_gpt_oss_20b_solution.sh` are AutoDL-oriented launch/watch helpers for recorded Chengdu experiment workflows. They source `scripts/env_defaults.sh` so repository, model, SUMO, cache, and run-output paths can be overridden with environment variables instead of editing scripts.
 
 ## Documentation And Tests
 
@@ -42,6 +42,7 @@
 | `images/` | Comparison images referenced by model-card drafts. |
 | `lmstudio_deepsignal_20260519_chat_template.jinja` | LM Studio chat template for the DeepSignal prompt format. |
 | `tests/` | Lightweight unit tests for parsing, validation, and route-selection helpers. |
+| `requirements.yaml` | System, Python, backend, and path-variable requirements for full closed-loop benchmark runs. |
 
 ## Excluded From Git
 

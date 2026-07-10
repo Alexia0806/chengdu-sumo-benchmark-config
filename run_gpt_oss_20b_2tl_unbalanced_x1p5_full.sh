@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/env_defaults.sh"
 
-PROJECT_ROOT="/root/autodl-tmp/tsc-cycle-benchmark"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
-PYTHON_BIN="/root/miniconda3/bin/python3"
-BENCH_ROOT="/root/autodl-tmp/tsc-cycle-benchmark/chengdu_benchmark"
-MODEL_DIR="/root/autodl-tmp/models/gpt-oss-20b"
-RUN_ROOT="/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_2tl_J54_432452987_unbalanced_x1p5_gpt_oss_20b_temp0102_20260625"
+PYTHON_BIN="${PYTHON_BIN:-$SYSTEM_PYTHON_BIN}"
+BENCH_ROOT="${BENCH_ROOT:-$PROJECT_ROOT/chengdu_benchmark}"
+MODEL_DIR="$MODELS_ROOT/gpt-oss-20b"
+RUN_ROOT="$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_2tl_J54_432452987_unbalanced_x1p5_gpt_oss_20b_temp0102_20260625"
 LOG_DIR="$RUN_ROOT/logs"
 TLS_FILE="$RUN_ROOT/chengdu_2tl_tls.csv"
 ORCH_LOG="$LOG_DIR/orchestrator.log"
@@ -47,7 +48,7 @@ run_case() {
   HF_EXPERTS_IMPLEMENTATION=eager \
   "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
-    --sumo-home /usr/share/sumo \
+    --sumo-home "$SUMO_HOME" \
     --scenario sumo_llm \
     --tls-file "$TLS_FILE" \
     --output-dir "$out_dir" \

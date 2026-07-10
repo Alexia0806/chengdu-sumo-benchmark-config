@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="/root/autodl-tmp/tsc-cycle-benchmark"
-BENCH_ROOT="$PROJECT_ROOT/DeepSignal-benchmark"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
+BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_att_awt_relaxed_nochat_thinking_x1p8_no_x1p0_temp0102_$(date +%Y%m%d)}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
-PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 DEMAND_SCALES="${DEMAND_SCALES:-1.2 1.5 1.8}"
 TEMPERATURES="${TEMPERATURES:-0.1 0.2}"
 TARGET_TLS="${TARGET_TLS:-J54 314655170 432452987}"
@@ -94,7 +95,7 @@ run_case() {
   log_event "START $case_name demand_scale=$demand_scale target_peak_vph_per_route=$TARGET_PEAK_VPH_PER_ROUTE target_peak_routes_per_tl=$TARGET_PEAK_ROUTES_PER_TL tripinfo_drain=$TRIPINFO_DRAIN_SECONDS online_control_mode=$ONLINE_CONTROL_MODE base_online_control_mode=$BASE_ONLINE_CONTROL_MODE action_delay_cycles=$ACTION_DELAY_CYCLES n_predict=$N_PREDICT timeout_sec=$TIMEOUT_SEC"
   PYTHONUNBUFFERED=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
-    --sumo-home /usr/share/sumo \
+    --sumo-home "$SUMO_HOME" \
     --scenario sumo_llm \
     --tls-file "$TLS_FILE" \
     --output-dir "$out_dir" \
@@ -225,7 +226,7 @@ run_qwen4b_group() {
   run_hf_model_group \
     "qwen4b" \
     "04_qwen3_4b_base_nochat" \
-    "/root/autodl-tmp/models/Qwen3-4B" \
+    "$MODELS_ROOT/Qwen3-4B" \
     "$QWEN4B_PROMPT_FORMAT"
 }
 
@@ -233,7 +234,7 @@ run_qwen9b_group() {
   run_hf_model_group \
     "qwen9b" \
     "02_qwen35_9b_base_nochat" \
-    "/root/autodl-tmp/models/Qwen3.5-9B-Base" \
+    "$MODELS_ROOT/Qwen3.5-9B-Base" \
     "$QWEN9B_PROMPT_FORMAT"
 }
 
@@ -241,7 +242,7 @@ run_gemma12b_group() {
   run_hf_model_group \
     "gemma12b" \
     "05_gemma3_12b_it_nochat" \
-    "/root/autodl-tmp/models/gemma-3-12b-it" \
+    "$MODELS_ROOT/gemma-3-12b-it" \
     "$GEMMA12B_PROMPT_FORMAT"
 }
 
@@ -249,7 +250,7 @@ run_phi4_group() {
   run_hf_model_group \
     "phi4" \
     "06_phi4_nochat" \
-    "/root/autodl-tmp/models/phi-4" \
+    "$MODELS_ROOT/phi-4" \
     "$PHI4_PROMPT_FORMAT"
 }
 

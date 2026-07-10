@@ -72,7 +72,7 @@ Remote server:
 
 Run root:
 
-`/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_reasoning_nextcycle_smoke_20260624`
+`$RUNS_ROOT/chengdu_j54_reasoning_nextcycle_smoke_20260624`
 
 Expected active cases:
 
@@ -85,7 +85,7 @@ Timestamp: `2026-06-24 09:04 CST`
 
 Completed Qwen short-window smoke:
 
-- Run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_reasoning_nextcycle_smoke_20260624`
+- Run root: `$RUNS_ROOT/chengdu_j54_reasoning_nextcycle_smoke_20260624`
 - Window: `warmup_seconds=60`, `metric_seconds=300`, `tripinfo_drain_seconds=120`, `allow_nonstandard_window=1`
 - Prompt/control: `deepsignal_solution_first`, `temperature=0.1`, `n_predict=2048`, `online_control_mode=repaired`, `action_delay_cycles=1`
 - `qwen3_4b_base`: 6 calls, strict control `33.3%`, relaxed control `100%`, repaired control `100%`, plan application `83.3%`, average response `39.6s`
@@ -93,9 +93,9 @@ Completed Qwen short-window smoke:
 
 Gemma12B smoke attempted but not completed:
 
-- Run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_gemma12_solution_first_smoke_20260624`
+- Run root: `$RUNS_ROOT/chengdu_j54_gemma12_solution_first_smoke_20260624`
 - Case: `gemma3_12b_it_reasoning_nextcycle_J54_temp01_x1p2`
-- Model: `/root/autodl-tmp/models/gemma-3-12b-it`
+- Model: `$MODELS_ROOT/gemma-3-12b-it`
 - Config: `use_chat_template=1`, `hf_chat_template_message_mode=single_user`, `hf_chat_template_enable_thinking=0`, `HF_DTYPE=bfloat16`, `HF_DEVICE_MAP=auto`
 - Last known state: process PID `11976` started and Gemma12B loaded weights successfully; GPU memory reached about `24518 MiB used / 7594 MiB free`, utilization about `69%`
 - No model-call control-rate evidence was retrieved before SSH failed
@@ -103,10 +103,10 @@ Gemma12B smoke attempted but not completed:
 
 Completed Gemma12B comparison after server resumed:
 
-- No-thinking run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_gemma12_solution_first_smoke_20260624`
+- No-thinking run root: `$RUNS_ROOT/chengdu_j54_gemma12_solution_first_smoke_20260624`
 - No-thinking config: `hf_chat_template_enable_thinking=0`, `warmup_seconds=60`, `metric_seconds=180`, `tripinfo_drain_seconds=60`
 - No-thinking result: 4 calls, strict control `50.0%`, relaxed control `100.0%`, repaired control `100.0%`, plan application `75.0%`, average response `77.1s`, failures `0`
-- Thinking run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_gemma12_solution_first_thinking_smoke_20260624`
+- Thinking run root: `$RUNS_ROOT/chengdu_j54_gemma12_solution_first_thinking_smoke_20260624`
 - Thinking config: `hf_chat_template_enable_thinking=1`, `warmup_seconds=60`, `metric_seconds=120`, `tripinfo_drain_seconds=60`
 - Thinking result: 3 calls, strict control `66.7%`, relaxed control `100.0%`, repaired control `100.0%`, plan application `66.7%`, average response `77.3s`, failures `0`
 - Both Gemma variants output the same executable default-style plan `{0:80, 1:70, 2:40, 3:40}` in all sampled calls
@@ -114,7 +114,7 @@ Completed Gemma12B comparison after server resumed:
 
 Completed Gemma12B no-chat-template smoke:
 
-- No-chat run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_gemma12_solution_first_nochat_smoke_20260624`
+- No-chat run root: `$RUNS_ROOT/chengdu_j54_gemma12_solution_first_nochat_smoke_20260624`
 - No-chat config: `use_chat_template=0`, `warmup_seconds=60`, `metric_seconds=120`, `tripinfo_drain_seconds=60`
 - No-chat result: 3 calls, strict control `100.0%`, relaxed control `100.0%`, repaired control `100.0%`, plan application `66.7%`, average response `78.9s`, failures `0`
 - No-chat output format was cleaner than both chat-template variants: it emitted `<SOLUTION>...</SOLUTION>` without Markdown fences in all sampled calls
@@ -123,7 +123,7 @@ Completed Gemma12B no-chat-template smoke:
 
 Completed Qwen no-chat prompt-thinking smoke:
 
-- Run root: `/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_qwen_nochat_prompt_thinking_smoke_20260624`
+- Run root: `$RUNS_ROOT/chengdu_j54_qwen_nochat_prompt_thinking_smoke_20260624`
 - Config: `use_chat_template=0`, `prompt_format=deepsignal`, `hf_chat_template_enable_thinking=1` recorded as an experiment label only because the native HF thinking flag is not applied when chat template is disabled
 - Window: `warmup_seconds=60`, `metric_seconds=120`, `tripinfo_drain_seconds=60`
 - `qwen3_4b_base_nochat_prompt_thinking`: 3 calls, strict control `0.0%`, relaxed control `100.0%`, repaired control `100.0%`, plan application `66.7%`, average response `41.3s`, failures `0`

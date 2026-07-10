@@ -38,6 +38,7 @@ The repository is intentionally focused on the Chengdu benchmark assets. Full mo
 │   ├── summarize_step_metric_windows.py
 │   └── run_*.sh / watch_*.sh             # Remote experiment launch/watch scripts
 ├── tests/                                # Lightweight helper tests, no SUMO/model required
+├── requirements.yaml                     # System/backend/path requirements reference
 ├── README_DeepSignal_20260519_HF*.md      # Model-card drafts
 ├── MANIFEST.md                           # Tracked source asset manifest
 └── lmstudio_deepsignal_20260519_chat_template.jinja
@@ -128,7 +129,7 @@ python3 scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py \
   --output-dir runs/local_hf_j54
 ```
 
-Remote matrix scripts live under `scripts/run_*.sh`. Most default to `/root/autodl-tmp/tsc-cycle-benchmark` and can be overridden with environment variables such as `PROJECT_ROOT`, `PYTHON_BIN`, `RUN_ROOT`, and model path variables.
+Remote matrix scripts live under `scripts/run_*.sh`. They source `scripts/env_defaults.sh`, which derives path defaults from `AUTODL_ROOT`, `PROJECT_ROOT`, `MODELS_ROOT`, `RUNS_ROOT`, `SUMO_HOME`, and backend-specific variables. Override those variables before invoking a launcher when running outside the original AutoDL layout.
 
 ## Configuration
 
@@ -147,11 +148,17 @@ Important runner options:
 
 Useful environment variables:
 
+- `AUTODL_ROOT`: base directory used by remote-style launch scripts; defaults to `$HOME/autodl-tmp`.
 - `SUMO_HOME`: SUMO installation root; its `tools` directory provides TraCI.
 - `PROJECT_ROOT`: remote shell-script repository root.
+- `MODELS_ROOT`: local directory containing model checkpoints.
+- `RUNS_ROOT`: default parent for benchmark outputs.
 - `PYTHON_BIN`: Python executable used by remote launchers.
+- `LLAMA_SERVER`: llama.cpp server executable for GGUF workflows.
 - `HF_ATTN_IMPLEMENTATION` / `HF_EXPERTS_IMPLEMENTATION`: optional Hugging Face loading knobs used by the metrics runner.
 - `OPENAI_API_KEY` and `--openai-base-url`: OpenAI-compatible backend credentials and endpoint.
+
+See `requirements.yaml` for the full system, Python, backend, and path-variable checklist.
 
 ## Common Commands
 
@@ -192,6 +199,6 @@ python3 scripts/summarize_step_metric_windows.py \
 ## Known Limitations
 
 - Full benchmark runs are not hermetic; they require SUMO, model files, and backend-specific dependencies.
-- Many remote scripts encode AutoDL-era default paths under `/root/autodl-tmp/`; override environment variables when running elsewhere.
+- Full remote matrices still need external model files and backend runtimes; configure paths through `scripts/env_defaults.sh` variables or `requirements.yaml`.
 - The tracked repository contains only the Chengdu scenario bundle, not the full upstream `DeepSignal-benchmark` repository.
 - Local tests do not execute SUMO or model inference; they cover parsing, validation, and route-selection helpers only.

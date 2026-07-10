@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 RUNNER_SH="${RUNNER_SH:-$PROJECT_ROOT/scripts/run_chengdu_backfill_aligned_matrix_20260626.sh}"
 STAMP="${STAMP:-$(date +%Y%m%dT%H%M%S)}"
 QUEUE_ROOT="${QUEUE_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_backfill_aligned_queue_20260626_$STAMP}"
@@ -27,7 +28,7 @@ gpu_total_mib() {
 
 active_benchmark_count() {
   ps -eo pid=,command= \
-    | grep -E 'deepsignal_cycleplan_benchmark_chengdu_metrics.py|llama-server|/usr/share/sumo/bin/sumo' \
+    | grep -E "deepsignal_cycleplan_benchmark_chengdu_metrics.py|llama-server|${SUMO_HOME}/bin/sumo" \
     | grep -v grep \
     | wc -l \
     | tr -d ' '

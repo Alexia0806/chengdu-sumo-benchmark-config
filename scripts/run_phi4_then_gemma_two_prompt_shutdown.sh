@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 MATRIX_RUNNER="$PROJECT_ROOT/scripts/run_chengdu_phi4_strict_matrix.sh"
-PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 SHUTDOWN_ON_EXIT="${SHUTDOWN_ON_EXIT:-0}"
 SHUTDOWN_ONLY_ON_SUCCESS="${SHUTDOWN_ONLY_ON_SUCCESS:-1}"
@@ -32,7 +33,7 @@ shutdown_host() {
     fi
     sleep "$SHUTDOWN_DELAY_SEC"
     poweroff || halt
-  ) >/tmp/two_prompt_shutdown.log 2>&1 &
+  ) >$TMP_ROOT/two_prompt_shutdown.log 2>&1 &
 }
 
 finish() {
@@ -52,7 +53,7 @@ finish() {
 trap finish EXIT
 
 stop_existing_downloads() {
-  pkill -f "/tmp/gemma3_12b_download.py" 2>/dev/null || true
+  pkill -f "$TMP_ROOT/gemma3_12b_download.py" 2>/dev/null || true
 }
 
 clean_shm_model() {
@@ -79,7 +80,7 @@ run_matrix() {
   local run_root="$PROJECT_ROOT/runs/deepsignal_cycleplan/${model_label}_${prompt_label}_${online_control_mode}_${RUN_STAMP}"
 
   log_event "MATRIX_START model=$model_label repo=$hf_repo prompt_format=$prompt_format online_control_mode=$online_control_mode hf_chat_template_message_mode=$hf_chat_template_message_mode run_root=$run_root"
-  PROJECT_ROOT="$PROJECT_ROOT" \
+  PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}" \
   RUN_ROOT="$run_root" \
   PYTHON_BIN="$PYTHON_BIN" \
   HF_REPO="$hf_repo" \

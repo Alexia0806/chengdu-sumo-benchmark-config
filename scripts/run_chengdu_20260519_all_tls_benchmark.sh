@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
 if [[ -z "${PROJECT_ROOT:-}" ]]; then
   if [[ -f "scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py" ]]; then

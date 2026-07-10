@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-RUN_ROOT="${RUN_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_j54_reasoning_nextcycle_smoke_20260624}"
-SCRIPT="${SCRIPT:-/root/autodl-tmp/tsc-cycle-benchmark/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py}"
-PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
-BENCHMARK_ROOT="${BENCHMARK_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark/DeepSignal-benchmark}"
-SUMO_HOME="${SUMO_HOME:-/usr/share/sumo}"
+RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_j54_reasoning_nextcycle_smoke_20260624}"
+SCRIPT="${SCRIPT:-$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py}"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
+BENCHMARK_ROOT="${BENCHMARK_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
+SUMO_HOME="${SUMO_HOME:-$SUMO_HOME}"
 SCENARIO="${SCENARIO:-sumo_llm}"
 TL_ID="${TL_ID:-J54}"
 PROMPT_FORMAT="${PROMPT_FORMAT:-deepsignal_solution_first}"
@@ -32,7 +33,7 @@ ALLOW_NONSTANDARD_WINDOW="${ALLOW_NONSTANDARD_WINDOW:-0}"
 MODEL_SPECS="${MODEL_SPECS:-}"
 
 if [[ -z "$MODEL_SPECS" ]]; then
-  MODEL_SPECS="$(printf 'qwen3_4b_base|/root/autodl-tmp/models/Qwen3-4B|%s|%s|%s\nqwen35_9b_base|/root/autodl-tmp/models/Qwen3.5-9B-Base|%s|%s|%s' \
+  MODEL_SPECS="$(printf 'qwen3_4b_base|$MODELS_ROOT/Qwen3-4B|%s|%s|%s\nqwen35_9b_base|$MODELS_ROOT/Qwen3.5-9B-Base|%s|%s|%s' \
     "$USE_CHAT_TEMPLATE" "$HF_CHAT_TEMPLATE_MESSAGE_MODE" "$HF_CHAT_TEMPLATE_ENABLE_THINKING" \
     "$USE_CHAT_TEMPLATE" "$HF_CHAT_TEMPLATE_MESSAGE_MODE" "$HF_CHAT_TEMPLATE_ENABLE_THINKING")"
 fi

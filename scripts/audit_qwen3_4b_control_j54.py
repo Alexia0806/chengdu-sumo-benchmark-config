@@ -5,6 +5,7 @@ import argparse
 import csv
 import importlib.util
 import json
+import os
 import re
 import sys
 import time
@@ -12,6 +13,13 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def env_path(name: str, default: Path | str) -> Path:
+    return Path(os.environ.get(name, str(default))).expanduser()
 
 
 def import_benchmark_module(project_root: Path) -> Any:
@@ -264,21 +272,21 @@ def run_audit(args: argparse.Namespace) -> int:
 
 
 def parse_args() -> argparse.Namespace:
+    default_project_root = env_path("PROJECT_ROOT", PROJECT_ROOT)
+    default_models_root = env_path("MODELS_ROOT", default_project_root / "models")
+    default_runs_root = env_path("RUNS_ROOT", default_project_root / "runs" / "deepsignal_cycleplan")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--project-root", type=Path, default=Path("/root/autodl-tmp/tsc-cycle-benchmark"))
+    parser.add_argument("--project-root", type=Path, default=default_project_root)
     parser.add_argument(
         "--source-run",
         type=Path,
-        default=Path(
-            "/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/"
-            "chengdu_j54_9bbase_7kft_4b_fp16_att_awt_x1p8_20260622"
-        ),
+        default=default_runs_root / "chengdu_j54_9bbase_7kft_4b_fp16_att_awt_x1p8_20260622",
     )
-    parser.add_argument("--model-path", type=Path, default=Path("/root/autodl-tmp/models/Qwen3-4B"))
+    parser.add_argument("--model-path", type=Path, default=default_models_root / "Qwen3-4B")
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/root/autodl-tmp/tsc-cycle-benchmark/runs/control_audit/j54_qwen3_4b_base_20260622"),
+        default=default_runs_root.parent / "control_audit" / "j54_qwen3_4b_base_20260622",
     )
     parser.add_argument("--sample-indices", type=int, nargs="+", default=[0, 8, 16])
     parser.add_argument("--scales", nargs="+", default=["1p0", "1p2", "1p5", "1p8"])

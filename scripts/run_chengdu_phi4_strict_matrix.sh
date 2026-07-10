@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
-BENCH_ROOT="$PROJECT_ROOT/DeepSignal-benchmark"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
+BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_phi4_strict_$(date +%Y%m%d)}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
 SUMMARIZER="$PROJECT_ROOT/scripts/summarize_chengdu_peak_matrix.py"
-PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 HF_REPO="${HF_REPO:-microsoft/phi-4}"
 MODEL_PATH="${MODEL_PATH:-/dev/shm/phi-4}"
 MODEL_LABEL="${MODEL_LABEL:-phi4}"
@@ -117,7 +118,7 @@ run_case() {
   log_event "START $case_name demand_scale=$demand_scale temperature=$temperature online_control_mode=$ONLINE_CONTROL_MODE"
   PYTHONUNBUFFERED=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
-    --sumo-home /usr/share/sumo \
+    --sumo-home "$SUMO_HOME" \
     --scenario sumo_llm \
     --tls-file "$TLS_FILE" \
     --output-dir "$out_dir" \

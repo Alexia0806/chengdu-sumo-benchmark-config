@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-MAIN_RUN="${MAIN_RUN:-/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_unbalanced_x1p2_readme_models_20260701_auto}"
-PAR_RUN="${PAR_RUN:-/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_unbalanced_x1p2_readme_models_20260701_qwen4b_parallel}"
-SCRIPT="${SCRIPT:-/root/autodl-tmp/tsc-cycle-benchmark/scripts/run_chengdu_unbalanced_x1p2_readme_models_20260701.sh}"
-SUMMARIZER="${SUMMARIZER:-/root/autodl-tmp/tsc-cycle-benchmark/scripts/summarize_step_metric_windows.py}"
-PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
+MAIN_RUN="${MAIN_RUN:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_unbalanced_x1p2_readme_models_20260701_auto}"
+PAR_RUN="${PAR_RUN:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_unbalanced_x1p2_readme_models_20260701_qwen4b_parallel}"
+SCRIPT="${SCRIPT:-$PROJECT_ROOT/scripts/run_chengdu_unbalanced_x1p2_readme_models_20260701.sh}"
+SUMMARIZER="${SUMMARIZER:-$PROJECT_ROOT/scripts/summarize_step_metric_windows.py}"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 CASE="${CASE:-04_qwen3_4b_base_nochat_repaired_deepsignal_unbalanced_temp02_x1p2}"
-LOG="${LOG:-/root/autodl-tmp/codex_patch_20260701/qwen4b_parallel_watch.log}"
+LOG="${LOG:-$PATCH_ROOT/qwen4b_parallel_watch.log}"
 
 mkdir -p "$(dirname "$LOG")" "$PAR_RUN"
 

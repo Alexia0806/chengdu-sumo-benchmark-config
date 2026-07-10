@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="/root/autodl-tmp/tsc-cycle-benchmark"
-BENCH_ROOT="$PROJECT_ROOT/DeepSignal-benchmark"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
+BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_base_json_no_reasoning_20260618}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
-PYTHON_BIN="/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python"
+PYTHON_BIN="$TSC_CYCLE_ROOT/.venv/bin/python"
 TEMPERATURE="${TEMPERATURE:-0.2}"
 TEMP_LABEL="${TEMP_LABEL:-temp02}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
@@ -43,7 +44,7 @@ run_case() {
   log_event "START $case_name demand_scale=$demand_scale"
   PYTHONUNBUFFERED=1 "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
-    --sumo-home /usr/share/sumo \
+    --sumo-home "$SUMO_HOME" \
     --scenario sumo_llm \
     --tls-file "$TLS_FILE" \
     --output-dir "$out_dir" \
@@ -85,7 +86,7 @@ log_event "ALL_START run_root=$RUN_ROOT temperature=$TEMPERATURE prompt_format=d
 run_model_matrix "base9b_hf_json" \
   --controller model \
   --model-backend hf \
-  --hf-model-path /root/autodl-tmp/models/Qwen3.5-9B-Base \
+  --hf-model-path $MODELS_ROOT/Qwen3.5-9B-Base \
   --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
   --hf-dtype bfloat16 > "$LOG_DIR/base9b.group.log" 2>&1 &
 pid_9b=$!
@@ -93,7 +94,7 @@ pid_9b=$!
 run_model_matrix "base4b_hf_json" \
   --controller model \
   --model-backend hf \
-  --hf-model-path /root/autodl-tmp/models/Qwen3-4B \
+  --hf-model-path $MODELS_ROOT/Qwen3-4B \
   --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
   --hf-use-chat-template \
   --no-hf-chat-template-enable-thinking \

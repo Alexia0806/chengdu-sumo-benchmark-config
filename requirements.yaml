@@ -1,0 +1,61 @@
+name: chengdu-sumo-benchmark
+description: Runtime requirements for Chengdu SUMO closed-loop benchmark workflows.
+
+system:
+  python: ">=3.10 recommended; Python 3.9 is sufficient for the current unit tests"
+  sumo:
+    required_for: ["SUMO simulation", "TraCI closed-loop benchmark"]
+    install: "Install Eclipse SUMO and expose SUMO_HOME or put sumo on PATH."
+  shell: "bash"
+  git: "required for repository workflows"
+
+python:
+  core:
+    - name: standard-library
+      required_for: ["CSV/JSON/XML processing", "unit tests", "fixed/max-pressure benchmark helpers"]
+  optional:
+    - name: traci
+      required_for: ["SUMO closed-loop execution"]
+      install_hint: "Usually provided by SUMO under $SUMO_HOME/tools."
+    - name: torch
+      required_for: ["--model-backend hf"]
+    - name: transformers
+      required_for: ["--model-backend hf"]
+    - name: peft
+      required_for: ["HF adapter loading"]
+    - name: huggingface_hub
+      required_for: ["scripts/check_hf_model_access.py", "model download helpers"]
+
+model_backends:
+  llama:
+    required_for: ["--model-backend llama", "GGUF workflows"]
+    variables:
+      LLAMA_SERVER: "Path to llama-server executable."
+      GGUF_PATH: "Path to a local GGUF model file."
+  hf:
+    required_for: ["--model-backend hf"]
+    variables:
+      HF_MODEL_PATH: "Path to a local Hugging Face model directory."
+      HF_ADAPTER_PATH: "Optional PEFT adapter directory."
+      HF_ATTN_IMPLEMENTATION: "Optional transformers attention implementation override."
+      HF_EXPERTS_IMPLEMENTATION: "Optional expert implementation override."
+  openai:
+    required_for: ["--model-backend openai"]
+    variables:
+      OPENAI_API_KEY: "API key for the OpenAI-compatible endpoint."
+      OPENAI_BASE_URL: "Optional OpenAI-compatible base URL."
+      OPENAI_MODEL: "Model name used by the endpoint."
+
+path_defaults:
+  AUTODL_ROOT: "Base directory for remote AutoDL-style runs."
+  PROJECT_ROOT: "Repository root used by launch scripts."
+  TSC_CYCLE_ROOT: "External training/runtime repository root used by legacy scripts."
+  MODELS_ROOT: "Directory containing local model checkpoints."
+  RUNS_ROOT: "Default benchmark output root."
+  BENCH_ROOT: "Tracked Chengdu benchmark scenario root."
+  DEEPSIGNAL_BENCH_ROOT: "Optional upstream DeepSignal benchmark clone root."
+  SUMO_HOME: "SUMO installation root; auto-detected from PATH when possible."
+
+notes:
+  - "Full model closed-loop benchmarks require SUMO, model files, and exactly one configured backend."
+  - "Generated outputs should remain under runs/, outputs/, or tmp/ and are ignored by Git."

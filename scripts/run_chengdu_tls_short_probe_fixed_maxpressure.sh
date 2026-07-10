@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 if [[ -z "${BENCH_ROOT:-}" ]]; then
   if [[ -d "$PROJECT_ROOT/chengdu_benchmark" ]]; then
-    BENCH_ROOT="$PROJECT_ROOT/chengdu_benchmark"
+    BENCH_ROOT="${BENCH_ROOT:-$PROJECT_ROOT/chengdu_benchmark}"
   else
-    BENCH_ROOT="$PROJECT_ROOT/DeepSignal-benchmark"
+    BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
   fi
 fi
 
-PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
   PYTHON_BIN="python3"
 fi
@@ -117,7 +118,7 @@ run_case() {
 
   PYTHONUNBUFFERED=1 "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
-    --sumo-home /usr/share/sumo \
+    --sumo-home "$SUMO_HOME" \
     --scenario sumo_llm \
     --tls-file "$TLS_FILE_EFFECTIVE" \
     --output-dir "$out_dir" \

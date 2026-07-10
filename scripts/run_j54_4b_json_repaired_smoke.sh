@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
-BENCH_ROOT="$PROJECT_ROOT/DeepSignal-benchmark"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
+BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/j54_qwen3_4b_base_json_repaired_smoke_20260622}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
 SUMMARIZER="$PROJECT_ROOT/scripts/summarize_chengdu_peak_matrix.py"
-PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
-MODEL_PATH="${MODEL_PATH:-/root/autodl-tmp/models/Qwen3-4B}"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
+MODEL_PATH="${MODEL_PATH:-$MODELS_ROOT/Qwen3-4B}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-8}"
 TRIPINFO_DRAIN_SECONDS="${TRIPINFO_DRAIN_SECONDS:-600}"
@@ -56,7 +57,7 @@ run_case() {
   log_event "START $case_name demand_scale=$demand_scale temperature=$temperature"
   PYTHONUNBUFFERED=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
-    --sumo-home /usr/share/sumo \
+    --sumo-home "$SUMO_HOME" \
     --scenario sumo_llm \
     --tls-file "$TLS_FILE" \
     --output-dir "$out_dir" \

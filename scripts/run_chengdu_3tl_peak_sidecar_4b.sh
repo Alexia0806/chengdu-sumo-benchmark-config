@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="/root/autodl-tmp/tsc-cycle-benchmark"
-BENCH_ROOT="$PROJECT_ROOT/DeepSignal-benchmark"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
+BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_min10_targetpeak_20260617}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
-PYTHON_BIN="/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python"
+PYTHON_BIN="$TSC_CYCLE_ROOT/.venv/bin/python"
 TEMPERATURE="${TEMPERATURE:-0.4}"
 TEMP_LABEL="${TEMP_LABEL:-temp04}"
 TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-240}"
@@ -34,7 +35,7 @@ run_case() {
   log_event "START $case_name demand_scale=$demand_scale"
   PYTHONUNBUFFERED=1 "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
-    --sumo-home /usr/share/sumo \
+    --sumo-home "$SUMO_HOME" \
     --scenario sumo_llm \
     --tls-file "$TLS_FILE" \
     --output-dir "$out_dir" \
@@ -66,14 +67,14 @@ for scale in 1.0 1.2 1.5; do
   run_case "04_qwen3_4b_base_min_green_${TEMP_LABEL}_x${tag}" "$scale" \
     --controller model \
     --model-backend hf \
-    --hf-model-path /root/autodl-tmp/models/Qwen3-4B \
+    --hf-model-path $MODELS_ROOT/Qwen3-4B \
     --hf-dtype bfloat16 \
     --model-fail-policy min_green
 
   run_case "05_qwen3_4b_base_first_min_green_${TEMP_LABEL}_x${tag}" "$scale" \
     --controller model \
     --model-backend hf \
-    --hf-model-path /root/autodl-tmp/models/Qwen3-4B \
+    --hf-model-path $MODELS_ROOT/Qwen3-4B \
     --hf-dtype bfloat16 \
     --model-fail-policy first_min_green
 done

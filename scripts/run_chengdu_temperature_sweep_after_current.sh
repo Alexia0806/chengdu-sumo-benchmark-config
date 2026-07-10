@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="/root/autodl-tmp/tsc-cycle-benchmark"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 CURRENT_ROOT="$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_min10_targetpeak_20260617"
 LOG="$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_temperature_sweep_20260617.log"
 

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
 SSH_PORT="${SSH_PORT:-25480}"
 SSH_HOST="${SSH_HOST:-root@connect.westd.seetacloud.com}"
-REMOTE_RUN_ROOT="${REMOTE_RUN_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_unbalanced_x1p2_readme_models_20260701_auto}"
-REMOTE_PY="${REMOTE_PY:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
-REMOTE_SUMMARIZER="${REMOTE_SUMMARIZER:-/root/autodl-tmp/tsc-cycle-benchmark/scripts/summarize_step_metric_windows.py}"
+REMOTE_RUN_ROOT="${REMOTE_RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_unbalanced_x1p2_readme_models_20260701_auto}"
+REMOTE_PY="${REMOTE_PY:-$TSC_CYCLE_ROOT/.venv/bin/python}"
+REMOTE_SUMMARIZER="${REMOTE_SUMMARIZER:-$PROJECT_ROOT/scripts/summarize_step_metric_windows.py}"
 LOCAL_DEST="${LOCAL_DEST:-outputs/remote_benchmark_results_20260702/readme_unbalanced_x1p2_rerun_models}"
 POLL_SECONDS="${POLL_SECONDS:-180}"
-SHUTDOWN_LOG="${SHUTDOWN_LOG:-/root/autodl-tmp/tsc-cycle-benchmark/shutdown_after_readme_rerun_pull_20260702.log}"
+SHUTDOWN_LOG="${SHUTDOWN_LOG:-$PROJECT_ROOT/shutdown_after_readme_rerun_pull_20260702.log}"
 
 CASES=(
   "03_model_fp16_20260519_unbalanced_temp02_x1p2"

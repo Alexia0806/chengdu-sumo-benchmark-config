@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 if [[ -z "${BENCH_ROOT:-}" ]]; then
   if [[ -d "$PROJECT_ROOT/chengdu_benchmark" ]]; then
-    BENCH_ROOT="$PROJECT_ROOT/chengdu_benchmark"
+    BENCH_ROOT="${BENCH_ROOT:-$PROJECT_ROOT/chengdu_benchmark}"
   else
-    BENCH_ROOT="$PROJECT_ROOT/DeepSignal-benchmark"
+    BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
   fi
 fi
 RUNNER="${RUNNER:-$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py}"
 WINDOW_SUMMARIZER="${WINDOW_SUMMARIZER:-$PROJECT_ROOT/scripts/summarize_step_metric_windows.py}"
-PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
   PYTHON_BIN="python3"
 fi
@@ -41,9 +42,9 @@ TARGET_PEAK_VPH_PER_ROUTE="${TARGET_PEAK_VPH_PER_ROUTE:-480}"
 TARGET_PEAK_ROUTES_PER_TL="${TARGET_PEAK_ROUTES_PER_TL:-2}"
 DEEPSIGNAL_REASONING_MAX_CHARS="${DEEPSIGNAL_REASONING_MAX_CHARS:-160}"
 
-QWEN9B_PATH="${QWEN9B_PATH:-/root/autodl-tmp/models/Qwen3.5-9B-Base}"
-FT9B_ADAPTER="${FT9B_ADAPTER:-/root/autodl-tmp/TSC_CYCLE_v1/runs/qwen35-9b-text-5090-1p5epoch-20260615T072040Z/adapter}"
-FT9B_3500_ADAPTER="${FT9B_3500_ADAPTER:-/root/autodl-tmp/TSC_CYCLE_v1/runs/qwen35-9b-text-5090-3500-3epoch-20260617T044255Z/adapter}"
+QWEN9B_PATH="${QWEN9B_PATH:-$MODELS_ROOT/Qwen3.5-9B-Base}"
+FT9B_ADAPTER="${FT9B_ADAPTER:-$TSC_CYCLE_ROOT/runs/qwen35-9b-text-5090-1p5epoch-20260615T072040Z/adapter}"
+FT9B_3500_ADAPTER="${FT9B_3500_ADAPTER:-$TSC_CYCLE_ROOT/runs/qwen35-9b-text-5090-3500-3epoch-20260617T044255Z/adapter}"
 HF_DTYPE="${HF_DTYPE:-bfloat16}"
 HF_DEVICE_MAP="${HF_DEVICE_MAP:-auto}"
 HF_N_PREDICT="${HF_N_PREDICT:-512}"
@@ -193,7 +194,7 @@ run_case() {
 
   PYTHONUNBUFFERED=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
-    --sumo-home /usr/share/sumo \
+    --sumo-home "$SUMO_HOME" \
     --scenario sumo_llm \
     --tls-file "$tls_file" \
     --output-dir "$out_dir" \

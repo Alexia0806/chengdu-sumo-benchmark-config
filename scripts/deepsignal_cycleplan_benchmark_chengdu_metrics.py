@@ -36,17 +36,35 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-DEFAULT_BENCHMARK_ROOT = PROJECT_ROOT / "DeepSignal-benchmark"
-DEFAULT_GGUF = (
-    PROJECT_ROOT
-    / "artifacts"
-    / "autodl_exports"
-    / "autodl-qwen35-9b-20260525T183023Z"
-    / "model.q4_K_M.gguf"
-)
-DEFAULT_SUMO_HOME = Path(
-    "/Library/Frameworks/EclipseSUMO.framework/Versions/1.25.0/EclipseSUMO/share/sumo"
-)
+
+
+def _env_path(name: str, default: Path | str) -> Path:
+    return Path(os.environ.get(name, str(default))).expanduser()
+
+
+def _detect_sumo_home() -> Path:
+    if os.environ.get("SUMO_HOME"):
+        return Path(os.environ["SUMO_HOME"]).expanduser()
+    for binary_name in ("sumo", "sumo-gui"):
+        binary = shutil.which(binary_name)
+        if not binary:
+            continue
+        candidate = Path(binary).resolve().parent.parent
+        if (candidate / "tools").exists():
+            return candidate
+    return Path(".")
+
+
+def _detect_llama_server() -> Path:
+    if os.environ.get("LLAMA_SERVER"):
+        return Path(os.environ["LLAMA_SERVER"]).expanduser()
+    binary = shutil.which("llama-server")
+    return Path(binary) if binary else Path("llama-server")
+
+
+DEFAULT_BENCHMARK_ROOT = _env_path("BENCHMARK_ROOT", PROJECT_ROOT / "chengdu_benchmark")
+DEFAULT_GGUF = _env_path("GGUF_PATH", PROJECT_ROOT / "models" / "model.q4_K_M.gguf")
+DEFAULT_SUMO_HOME = _detect_sumo_home()
 OPENAI_JSON_ONLY_SYSTEM_PROMPT = (
     "Return only the final JSON answer requested by the user. "
     "Do not include reasoning, XML tags, markdown, code fences, or any prose. "
@@ -281,9 +299,10 @@ def effective_sumo_home(sumo_home: Path) -> Path:
 
 def _ensure_sumo_imports(sumo_home: Path) -> None:
     resolved_sumo_home = effective_sumo_home(sumo_home)
-    os.environ["SUMO_HOME"] = str(resolved_sumo_home)
     tools = resolved_sumo_home / "tools"
-    if str(tools) not in sys.path:
+    if tools.exists():
+        os.environ["SUMO_HOME"] = str(resolved_sumo_home)
+    if tools.exists() and str(tools) not in sys.path:
         sys.path.insert(0, str(tools))
 
 
@@ -3798,7 +3817,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--prefill", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--gguf-path", type=Path, default=DEFAULT_GGUF)
-    parser.add_argument("--llama-server", type=Path, default=Path("/opt/homebrew/bin/llama-server"))
+    parser.add_argument("--llama-server", type=Path, default=_detect_llama_server())
     parser.add_argument("--sumo-home", type=Path, default=DEFAULT_SUMO_HOME)
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--warmup-seconds", type=int, default=300)

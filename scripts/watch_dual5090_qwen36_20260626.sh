@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -uo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
 INTERVAL_SEC="${1:-30}"
-WATCH_ROOT="${WATCH_ROOT:-/root/autodl-tmp/watchers}"
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
+WATCH_ROOT="${WATCH_ROOT:-$WATCH_ROOT}"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 RUN_BASE="${RUN_BASE:-$PROJECT_ROOT/runs/deepsignal_cycleplan}"
-MODEL_DIR="${MODEL_DIR:-/root/autodl-tmp/models/Qwen3.6-27B}"
+MODEL_DIR="${MODEL_DIR:-$MODELS_ROOT/Qwen3.6-27B}"
 mkdir -p "$WATCH_ROOT"
 
 LOG_PATH="${WATCH_LOG_PATH:-$WATCH_ROOT/dual5090_qwen36_watch_$(date +%Y%m%dT%H%M%S).log}"
@@ -24,9 +25,9 @@ snapshot() {
     echo "[gpu-processes]"
     nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>&1 || true
     echo "[bench-processes]"
-    ps -eo pid,ppid,etime,cmd | grep -E "deepsignal_cycleplan_benchmark|run_chengdu|qwen36|Qwen3.6|/usr/share/sumo/bin/sumo" | grep -v grep || true
+    ps -eo pid,ppid,etime,cmd | grep -E "deepsignal_cycleplan_benchmark|run_chengdu|qwen36|Qwen3.6|$SUMO_HOME/bin/sumo" | grep -v grep || true
     echo "[disk]"
-    df -h /root/autodl-tmp 2>&1 || true
+    df -h "$AUTODL_ROOT" 2>&1 || true
     if [[ -d "$MODEL_DIR" ]]; then
       echo "[model]"
       du -sh "$MODEL_DIR" 2>&1 || true

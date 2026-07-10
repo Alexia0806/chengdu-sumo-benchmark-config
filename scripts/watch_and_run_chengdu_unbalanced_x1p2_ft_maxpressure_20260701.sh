@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
-PATCH_ROOT="${PATCH_ROOT:-/root/autodl-tmp/codex_patch_20260701}"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
+PATCH_ROOT="${PATCH_ROOT:-$PATCH_ROOT}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_unbalanced_x1p2_ft_maxpressure_20260701_auto}"
 LOG_FILE="${LOG_FILE:-$PATCH_ROOT/watcher.log}"
 POLL_SECONDS="${POLL_SECONDS:-120}"
 STABLE_CHECKS_REQUIRED="${STABLE_CHECKS_REQUIRED:-3}"
 
-QWEN9B_PATH="${QWEN9B_PATH:-/root/autodl-tmp/models/Qwen3.5-9B-Base}"
-FT9B_ADAPTER="${FT9B_ADAPTER:-/root/autodl-tmp/TSC_CYCLE_v1/runs/qwen35-9b-text-5090-1p5epoch-20260615T072040Z/adapter}"
-FT9B_3500_ADAPTER="${FT9B_3500_ADAPTER:-/root/autodl-tmp/TSC_CYCLE_v1/runs/qwen35-9b-text-5090-3500-3epoch-20260617T044255Z/adapter}"
+QWEN9B_PATH="${QWEN9B_PATH:-$MODELS_ROOT/Qwen3.5-9B-Base}"
+FT9B_ADAPTER="${FT9B_ADAPTER:-$TSC_CYCLE_ROOT/runs/qwen35-9b-text-5090-1p5epoch-20260615T072040Z/adapter}"
+FT9B_3500_ADAPTER="${FT9B_3500_ADAPTER:-$TSC_CYCLE_ROOT/runs/qwen35-9b-text-5090-3500-3epoch-20260617T044255Z/adapter}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
@@ -68,7 +69,7 @@ ready_signature() {
   local scenedir
   scenedir="$(scenario_dir)"
   {
-    df -B1 /root/autodl-tmp | awk 'NR==2 {print "df_used=" $3}'
+    df -B1 "$AUTODL_ROOT" | awk 'NR==2 {print "df_used=" $3}'
     if [[ -n "$scenedir" ]]; then
       stat -c 'sumocfg=%s:%Y' "$scenedir/osm.sumocfg" 2>/dev/null || true
       stat -c 'net=%s:%Y' "$scenedir/ChengduCity.net.xml" 2>/dev/null || true
@@ -127,7 +128,7 @@ install_patch
 mkdir -p "$RUN_ROOT"
 touch "$RUN_ROOT/.watcher_launched"
 log_event "LAUNCH run_root=$RUN_ROOT bench_root=$(bench_root)"
-PROJECT_ROOT="$PROJECT_ROOT" \
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}" \
 BENCH_ROOT="$(bench_root)" \
 RUN_ROOT="$RUN_ROOT" \
 CASE_KEYS="${CASE_KEYS:-ft9b ft9b3500 max_pressure}" \

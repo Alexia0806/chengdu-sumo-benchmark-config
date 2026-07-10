@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 RUNNER_SH="${RUNNER_SH:-$PROJECT_ROOT/scripts/run_chengdu_backfill_aligned_matrix_20260626.sh}"
 STAMP="${STAMP:-$(date +%Y%m%dT%H%M%S)}"
 QUEUE_ROOT="${QUEUE_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_small_models_resume_20260627_$STAMP}"
@@ -11,7 +12,7 @@ SCENARIOS="${SCENARIOS:-unbalanced_x1p5 balanced_x1p5 balanced_x1p2 unbalanced_x
 TEMPERATURES="${TEMPERATURES:-0.1 0.2}"
 RUN_DEFAULT="${RUN_DEFAULT:-0}"
 RUN_UNBALANCED_X15_FULL3TL="${RUN_UNBALANCED_X15_FULL3TL:-0}"
-PYTHON_BIN="${PYTHON_BIN:-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
   PYTHON_BIN="python3"
 fi
@@ -25,7 +26,7 @@ log_event() {
 
 active_benchmark_count() {
   ps -eo pid=,command= \
-    | grep -E 'deepsignal_cycleplan_benchmark_chengdu_metrics.py|llama-server|/usr/share/sumo/bin/sumo' \
+    | grep -E "deepsignal_cycleplan_benchmark_chengdu_metrics.py|llama-server|${SUMO_HOME}/bin/sumo" \
     | grep -v grep \
     | wc -l \
     | tr -d ' '

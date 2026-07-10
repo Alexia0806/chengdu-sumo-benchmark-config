@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-export HF_HOME=/root/autodl-tmp/hf-cache
-export HUGGINGFACE_HUB_CACHE=/root/autodl-tmp/hf-cache/hub
+export HF_HOME=$HF_HOME
+export HUGGINGFACE_HUB_CACHE=$HF_HOME/hub
 export HF_ENDPOINT=https://hf-mirror.com
-mkdir -p /root/autodl-tmp/models /root/autodl-tmp/hf-cache
+mkdir -p $MODELS_ROOT $HF_HOME
 
-/root/autodl-tmp/TSC_CYCLE_v1/.venv/bin/python - <<'PY'
+$TSC_CYCLE_ROOT/.venv/bin/python - <<'PY'
 from huggingface_hub import snapshot_download
 
 snapshot_download(
     repo_id="Qwen/Qwen3-4B",
-    local_dir="/root/autodl-tmp/models/Qwen3-4B",
+    local_dir="$MODELS_ROOT/Qwen3-4B",
     local_dir_use_symlinks=False,
     resume_download=True,
 )
-print("download_complete /root/autodl-tmp/models/Qwen3-4B")
+print("download_complete $MODELS_ROOT/Qwen3-4B")
 PY

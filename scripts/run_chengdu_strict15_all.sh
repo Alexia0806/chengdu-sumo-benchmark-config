@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-GROUP=/root/autodl-tmp/tsc-cycle-benchmark/runs/deepsignal_cycleplan/chengdu_fixed15_strict_20260616
+GROUP=$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_fixed15_strict_20260616
 LOG_DIR="$GROUP/logs"
 SCRIPT_DIR="$GROUP/scripts"
 mkdir -p "$LOG_DIR"

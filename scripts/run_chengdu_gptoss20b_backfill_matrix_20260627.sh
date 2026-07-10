@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
-PROJECT_ROOT="${PROJECT_ROOT:-/root/autodl-tmp/tsc-cycle-benchmark}"
+PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 RUNNER="${RUNNER:-$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py}"
 SUMMARIZER="${SUMMARIZER:-$PROJECT_ROOT/scripts/summarize_chengdu_peak_matrix.py}"
-PYTHON_BIN="${PYTHON_BIN:-/root/miniconda3/bin/python3}"
+PYTHON_BIN="${PYTHON_BIN:-$SYSTEM_PYTHON_BIN}"
 BENCH_ROOT="${BENCH_ROOT:-$PROJECT_ROOT/chengdu_benchmark}"
-MODEL_DIR="${MODEL_DIR:-/root/autodl-tmp/models/gpt-oss-20b}"
+MODEL_DIR="${MODEL_DIR:-$MODELS_ROOT/gpt-oss-20b}"
 STAMP="${STAMP:-$(date +%Y%m%dT%H%M%S)}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_gptoss20b_backfill_matrix_20260627_$STAMP}"
 LOG_DIR="$RUN_ROOT/logs"
@@ -198,7 +199,7 @@ run_case() {
   HF_EXPERTS_IMPLEMENTATION=eager \
   "$PYTHON_BIN" "$RUNNER" \
     --benchmark-root "$BENCH_ROOT" \
-    --sumo-home /usr/share/sumo \
+    --sumo-home "$SUMO_HOME" \
     --scenario sumo_llm \
     --tls-file "$tls_file" \
     --output-dir "$out_dir" \
