@@ -85,6 +85,51 @@ def metric_key_float(value: float) -> str:
     return text.replace("-", "m").replace(".", "p")
 
 
+AGGREGATE_METRIC_KEYS: tuple[str, ...] = (
+    "format_success_rate",
+    "control_usable_rate",
+    "strict_format_success_rate",
+    "strict_control_usable_rate",
+    "relaxed_json_success_rate",
+    "relaxed_control_usable_rate",
+    "repaired_control_usable_rate",
+    "repair_applied_rate",
+    "plans_applied_rate",
+    "fallback_plan_rate",
+    "avg_queue_vehicles",
+    "p95_queue_vehicles",
+    "max_queue_vehicles",
+    "avg_queue_length_vehicles",
+    "p95_queue_length_vehicles",
+    "max_queue_length_vehicles",
+    "avg_delay_per_vehicle_sec",
+    "local_delay_per_intersection_minute_sec",
+    "passage_per_metric_observation",
+    "passage_seen_ratio_approx",
+    "queue_over_threshold_seconds",
+    "queue_over_threshold_fraction",
+    "max_continuous_queue_over_threshold_seconds",
+    "queue_over_threshold_seconds_t10",
+    "queue_over_threshold_seconds_t20",
+    "queue_over_threshold_seconds_t30",
+    "queue_over_threshold_seconds_t40",
+    "max_continuous_queue_over_threshold_seconds_t10",
+    "max_continuous_queue_over_threshold_seconds_t20",
+    "max_continuous_queue_over_threshold_seconds_t30",
+    "max_continuous_queue_over_threshold_seconds_t40",
+    "throughput_veh_per_min",
+    "avg_response_time_sec",
+    "network_att_sec",
+    "network_awt_sec",
+    "network_travel_time_delay_sec",
+    "network_trip_completion_ratio",
+    "target_tl_att_sec",
+    "target_tl_awt_sec",
+    "target_tl_travel_time_delay_sec",
+    "target_tl_trip_completion_ratio",
+)
+
+
 GITHUB_SCENARIOS: dict[str, dict[str, Any]] = {
     "BadHersfeld_osm_osm": {"config": "osm.sumocfg", "usage": "train"},
     "bologna_acosta_run": {"config": "run.sumocfg", "usage": "train"},
@@ -568,7 +613,9 @@ def select_target_peak_route_pairs(
         dst_lanes = float(dst_info.get("lanes") or 0.0)
         length_ok = float(src_length >= min_source_length) + float(dst_length >= min_dest_length)
         # Prefer stable source/destination edges but keep the score simple and auditable.
-        route_score = min(src_length, 300.0) + 0.5 * min(dst_length, 300.0) + 20.0 * src_lanes + 10.0 * dst_lanes
+        source_score = min(src_length, 300.0) + 20.0 * src_lanes
+        destination_score = 0.5 * min(dst_length, 300.0) + 10.0 * dst_lanes
+        route_score = source_score + destination_score
         return (length_ok, route_score, src_lanes + dst_lanes, src, dst)
 
     scored = sorted(pairs, key=score, reverse=True)
@@ -1204,31 +1251,15 @@ def extract_solution_json_relaxed(text: str) -> tuple[Any | None, str | None]:
     trailing text after a valid JSON object/array. It still returns only parsed
     JSON; schema repair is handled separately and logged.
     """
-    stripped = text.strip()
-    candidates: list[str] = []
-    if "<SOLUTION>" in stripped:
-        start = stripped.rfind("<SOLUTION>") + len("<SOLUTION>")
-        end = stripped.rfind("</SOLUTION>")
-        candidates.append(stripped[start:end].strip() if end > start else stripped[start:].strip())
-    candidates.append(stripped)
-    decoder = json.JSONDecoder()
-    errors: list[str] = []
-    for candidate in candidates:
-        for idx, char in enumerate(candidate):
-            if char not in "[{":
-                continue
-            try:
-                parsed, _ = decoder.raw_decode(candidate[idx:])
-                return parsed, None
-            except json.JSONDecodeError as exc:
-                errors.append(f"json_decode@{idx}: {exc}")
+    payloads, errors = iter_relaxed_json_payloads(text)
+    if payloads:
+        return payloads[0], None
     if errors:
         return None, errors[0]
     return None, "json_not_found"
 
 
-def iter_relaxed_json_payloads(text: str) -> tuple[list[Any], list[str]]:
-    """Return every complete JSON payload embedded in priority order."""
+def _relaxed_json_text_candidates(text: str) -> list[str]:
     stripped = text.strip()
     candidates: list[str] = []
     if "<SOLUTION>" in stripped:
@@ -1236,12 +1267,16 @@ def iter_relaxed_json_payloads(text: str) -> tuple[list[Any], list[str]]:
         end = stripped.rfind("</SOLUTION>")
         candidates.append(stripped[start:end].strip() if end > start else stripped[start:].strip())
     candidates.append(stripped)
+    return candidates
 
+
+def iter_relaxed_json_payloads(text: str) -> tuple[list[Any], list[str]]:
+    """Return every complete JSON payload embedded in priority order."""
     decoder = json.JSONDecoder()
     payloads: list[Any] = []
     errors: list[str] = []
     seen: set[str] = set()
-    for candidate in candidates:
+    for candidate in _relaxed_json_text_candidates(text):
         for idx, char in enumerate(candidate):
             if char not in "[{":
                 continue
@@ -3450,49 +3485,7 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         return sum(1 for row in items if row.get("active_tl") is False)
 
     overall = {}
-    for key in (
-        "format_success_rate",
-        "control_usable_rate",
-        "strict_format_success_rate",
-        "strict_control_usable_rate",
-        "relaxed_json_success_rate",
-        "relaxed_control_usable_rate",
-        "repaired_control_usable_rate",
-        "repair_applied_rate",
-        "plans_applied_rate",
-        "fallback_plan_rate",
-        "avg_queue_vehicles",
-        "p95_queue_vehicles",
-        "max_queue_vehicles",
-        "avg_queue_length_vehicles",
-        "p95_queue_length_vehicles",
-        "max_queue_length_vehicles",
-        "avg_delay_per_vehicle_sec",
-        "local_delay_per_intersection_minute_sec",
-        "passage_per_metric_observation",
-        "passage_seen_ratio_approx",
-        "queue_over_threshold_seconds",
-        "queue_over_threshold_fraction",
-        "max_continuous_queue_over_threshold_seconds",
-        "queue_over_threshold_seconds_t10",
-        "queue_over_threshold_seconds_t20",
-        "queue_over_threshold_seconds_t30",
-        "queue_over_threshold_seconds_t40",
-        "max_continuous_queue_over_threshold_seconds_t10",
-        "max_continuous_queue_over_threshold_seconds_t20",
-        "max_continuous_queue_over_threshold_seconds_t30",
-        "max_continuous_queue_over_threshold_seconds_t40",
-        "throughput_veh_per_min",
-        "avg_response_time_sec",
-        "network_att_sec",
-        "network_awt_sec",
-        "network_travel_time_delay_sec",
-        "network_trip_completion_ratio",
-        "target_tl_att_sec",
-        "target_tl_awt_sec",
-        "target_tl_travel_time_delay_sec",
-        "target_tl_trip_completion_ratio",
-    ):
+    for key in AGGREGATE_METRIC_KEYS:
         overall.update(metric_bundle(rows, key))
     overall["denominators"] = denominator_bundle(rows)
 
@@ -3510,49 +3503,7 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "inactive_run_rate": (n_inactive / len(items) * 100.0) if items else 0.0,
             "denominators": denominator_bundle(items),
         }
-        for key in (
-            "format_success_rate",
-            "control_usable_rate",
-            "strict_format_success_rate",
-            "strict_control_usable_rate",
-            "relaxed_json_success_rate",
-            "relaxed_control_usable_rate",
-            "repaired_control_usable_rate",
-            "repair_applied_rate",
-            "plans_applied_rate",
-            "fallback_plan_rate",
-            "avg_queue_vehicles",
-            "p95_queue_vehicles",
-            "max_queue_vehicles",
-            "avg_queue_length_vehicles",
-            "p95_queue_length_vehicles",
-            "max_queue_length_vehicles",
-            "avg_delay_per_vehicle_sec",
-            "local_delay_per_intersection_minute_sec",
-            "passage_per_metric_observation",
-            "passage_seen_ratio_approx",
-            "queue_over_threshold_seconds",
-            "queue_over_threshold_fraction",
-            "max_continuous_queue_over_threshold_seconds",
-            "queue_over_threshold_seconds_t10",
-            "queue_over_threshold_seconds_t20",
-            "queue_over_threshold_seconds_t30",
-            "queue_over_threshold_seconds_t40",
-            "max_continuous_queue_over_threshold_seconds_t10",
-            "max_continuous_queue_over_threshold_seconds_t20",
-            "max_continuous_queue_over_threshold_seconds_t30",
-            "max_continuous_queue_over_threshold_seconds_t40",
-            "throughput_veh_per_min",
-            "avg_response_time_sec",
-            "network_att_sec",
-            "network_awt_sec",
-            "network_travel_time_delay_sec",
-            "network_trip_completion_ratio",
-            "target_tl_att_sec",
-            "target_tl_awt_sec",
-            "target_tl_travel_time_delay_sec",
-            "target_tl_trip_completion_ratio",
-        ):
+        for key in AGGREGATE_METRIC_KEYS:
             payload.update(metric_bundle(items, key))
         usage_summary[usage] = payload
 
@@ -3751,6 +3702,26 @@ def predictor_meta(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def validate_runtime_args(args: argparse.Namespace) -> None:
+    if args.warmup_seconds < 0:
+        raise ValueError("--warmup-seconds must be >= 0")
+    if args.metric_seconds <= 0:
+        raise ValueError("--metric-seconds must be > 0")
+    if args.decision_interval_seconds <= 0:
+        raise ValueError("--decision-interval-seconds must be > 0")
+    if args.min_green <= 0:
+        raise ValueError("--min-green must be > 0")
+    if args.max_green < args.min_green:
+        raise ValueError("--max-green must be >= --min-green")
+    if args.demand_scale <= 0:
+        raise ValueError("--demand-scale must be positive")
+    if args.target_peak_vph_per_route < 0:
+        raise ValueError("--target-peak-vph-per-route must be >= 0")
+    if args.target_peak_routes_per_tl < 0:
+        raise ValueError("--target-peak-routes-per-tl must be >= 0")
+    if args.target_peak_min_source_length < 0 or args.target_peak_min_dest_length < 0:
+        raise ValueError("--target-peak-min-source-length and --target-peak-min-dest-length must be >= 0")
+    if args.target_peak_end is not None and args.target_peak_end <= args.target_peak_begin:
+        raise ValueError("--target-peak-end must be greater than --target-peak-begin")
     if args.forecaster_min_history_steps > args.forecaster_history_steps:
         raise ValueError("--forecaster-min-history-steps must be <= --forecaster-history-steps")
     if args.tripinfo_drain_seconds < 0:

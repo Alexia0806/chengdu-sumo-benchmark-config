@@ -10,6 +10,8 @@ venv/
 
 # Local outputs and large/generated experiment artifacts.
 runs/
+outputs/
+tmp/
 artifacts/
 *.log
 *.jsonl
@@ -17,6 +19,7 @@ artifacts/
 *.tar.gz
 
 # Keep this repository focused on the Chengdu scenario bundle.
+DeepSignal-github/
 TSC_CYCLE_v1/
 TSC_CYCLE_v1_review/
 TSC_CYCLE_v4_reproduction/

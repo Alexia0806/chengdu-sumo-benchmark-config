@@ -1762,6 +1762,16 @@ def predictor_meta(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def validate_runtime_args(args: argparse.Namespace) -> None:
+    if args.warmup_seconds < 0:
+        raise ValueError("--warmup-seconds must be >= 0")
+    if args.metric_seconds <= 0:
+        raise ValueError("--metric-seconds must be > 0")
+    if args.decision_interval_seconds <= 0:
+        raise ValueError("--decision-interval-seconds must be > 0")
+    if args.min_green <= 0:
+        raise ValueError("--min-green must be > 0")
+    if args.max_green < args.min_green:
+        raise ValueError("--max-green must be >= --min-green")
     if args.forecaster_min_history_steps > args.forecaster_history_steps:
         raise ValueError("--forecaster-min-history-steps must be <= --forecaster-history-steps")
     if args.gui_delay_ms is not None and args.gui_delay_ms < 0:
