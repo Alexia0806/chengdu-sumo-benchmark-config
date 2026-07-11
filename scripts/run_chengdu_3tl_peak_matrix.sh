@@ -6,7 +6,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_min10_targetpeak_20260617}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
-PYTHON_BIN="$TSC_CYCLE_ROOT/.venv/bin/python"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 TEMPERATURE="${TEMPERATURE:-0.4}"
 TEMP_LABEL="${TEMP_LABEL:-temp04}"
 SKIP_4B="${SKIP_4B:-0}"
@@ -90,15 +90,15 @@ for scale in 1.0 1.2 1.5; do
   run_case "01_9b_adapter_${TEMP_LABEL}_x${tag}" "$scale" \
     --controller model \
     --model-backend hf \
-    --hf-model-path $MODELS_ROOT/Qwen3.5-9B-Base \
-    --hf-adapter-path $TSC_CYCLE_ROOT/runs/qwen35-9b-text-5090-1p5epoch-20260615T072040Z/adapter \
+    --hf-model-path "$MODELS_ROOT/Qwen3.5-9B-Base" \
+    --hf-adapter-path "$TSC_CYCLE_ROOT/runs/qwen35-9b-text-5090-1p5epoch-20260615T072040Z/adapter" \
     --hf-dtype bfloat16 \
     --model-fail-policy keep_default
 
   run_case "02_9b_base_hf_${TEMP_LABEL}_x${tag}" "$scale" \
     --controller model \
     --model-backend hf \
-    --hf-model-path $MODELS_ROOT/Qwen3.5-9B-Base \
+    --hf-model-path "$MODELS_ROOT/Qwen3.5-9B-Base" \
     --hf-dtype bfloat16 \
     --prompt-format deepsignal_json \
     --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
@@ -107,8 +107,8 @@ for scale in 1.0 1.2 1.5; do
   run_case "03_model_fp16_20260519_${TEMP_LABEL}_x${tag}" "$scale" \
     --controller model \
     --model-backend llama \
-    --gguf-path $MODELS_ROOT/model-fp16-20260519.gguf \
-    --llama-server $LLAMA_CPP_ROOT/build-cuda/bin/llama-server \
+    --gguf-path "$MODELS_ROOT/model-fp16-20260519.gguf" \
+    --llama-server "$LLAMA_SERVER" \
     --ngl 99 \
     --threads 8 \
     --ctx-size 4096 \
@@ -121,7 +121,7 @@ for scale in 1.0 1.2 1.5; do
     run_case "04_qwen3_4b_base_${BASE_ONLINE_CONTROL_MODE}_${TEMP_LABEL}_x${tag}" "$scale" \
       --controller model \
       --model-backend hf \
-      --hf-model-path $MODELS_ROOT/Qwen3-4B \
+      --hf-model-path "$MODELS_ROOT/Qwen3-4B" \
       --hf-dtype bfloat16 \
       --prompt-format deepsignal_json \
       --hf-use-chat-template \

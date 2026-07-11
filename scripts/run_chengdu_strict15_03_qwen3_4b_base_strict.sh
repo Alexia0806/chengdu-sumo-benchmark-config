@@ -3,14 +3,14 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
 ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
-GROUP=$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_fixed15_strict_20260616
+GROUP="$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_fixed15_strict_20260616"
 TLS_FILE="$GROUP/chengdu_fixed15_tls.csv"
 OUT="$GROUP/03_qwen3_4b_base_strict_min_green_temp04"
 
 mkdir -p "$OUT"
 cd "$ROOT"
 
-PYTHONUNBUFFERED=1 $TSC_CYCLE_ROOT/.venv/bin/python \
+PYTHONUNBUFFERED=1 "$PYTHON_BIN" \
   scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py \
   --benchmark-root "$ROOT/DeepSignal-benchmark" \
   --sumo-home "$SUMO_HOME" \
@@ -18,7 +18,7 @@ PYTHONUNBUFFERED=1 $TSC_CYCLE_ROOT/.venv/bin/python \
   --tls-file "$TLS_FILE" \
   --controller model \
   --model-backend hf \
-  --hf-model-path $MODELS_ROOT/Qwen3-4B \
+  --hf-model-path "$MODELS_ROOT/Qwen3-4B" \
   --hf-dtype bfloat16 \
   --hf-device-map auto \
   --prompt-format deepsignal \

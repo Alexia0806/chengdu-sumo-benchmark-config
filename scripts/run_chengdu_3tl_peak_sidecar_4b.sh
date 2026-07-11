@@ -6,7 +6,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_min10_targetpeak_20260617}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
-PYTHON_BIN="$TSC_CYCLE_ROOT/.venv/bin/python"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 TEMPERATURE="${TEMPERATURE:-0.4}"
 TEMP_LABEL="${TEMP_LABEL:-temp04}"
 TARGET_TLS="${TARGET_TLS:-$DEFAULT_TARGET_TLS}"
@@ -83,14 +83,14 @@ for scale in 1.0 1.2 1.5; do
   run_case "04_qwen3_4b_base_min_green_${TEMP_LABEL}_x${tag}" "$scale" \
     --controller model \
     --model-backend hf \
-    --hf-model-path $MODELS_ROOT/Qwen3-4B \
+    --hf-model-path "$MODELS_ROOT/Qwen3-4B" \
     --hf-dtype bfloat16 \
     --model-fail-policy min_green
 
   run_case "05_qwen3_4b_base_first_min_green_${TEMP_LABEL}_x${tag}" "$scale" \
     --controller model \
     --model-backend hf \
-    --hf-model-path $MODELS_ROOT/Qwen3-4B \
+    --hf-model-path "$MODELS_ROOT/Qwen3-4B" \
     --hf-dtype bfloat16 \
     --model-fail-policy first_min_green
 done

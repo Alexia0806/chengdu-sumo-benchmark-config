@@ -164,11 +164,16 @@ Useful environment variables:
 
 See `requirements.yaml` for the full system, Python, backend, and path-variable checklist.
 
+`scripts/env_defaults.sh` resolves common runtime paths for launchers. If `PYTHON_BIN` is not explicitly set and the default TSC virtualenv is missing, it falls back to the first `python3`/`python` found on `PATH`.
+
 ## Common Commands
 
 ```bash
 # Syntax-check all Python scripts and tests
 python3 -m compileall -q scripts tests
+
+# Run the repository quality gate
+bash scripts/check_repo_quality.sh
 
 # Run lightweight unit tests
 python3 -m unittest discover -s tests -v

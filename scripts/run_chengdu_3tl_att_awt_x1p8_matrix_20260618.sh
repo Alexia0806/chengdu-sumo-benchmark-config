@@ -164,7 +164,7 @@ for temp in 0.1 0.2 0.4; do
     run_case "02_9b_base_hf_${label}_x${tag}" "$scale" \
       --controller model \
       --model-backend hf \
-      --hf-model-path $MODELS_ROOT/Qwen3.5-9B-Base \
+      --hf-model-path "$MODELS_ROOT/Qwen3.5-9B-Base" \
       --hf-dtype bfloat16 \
       --prompt-format deepsignal_json \
       --temperature "$temp" \
@@ -174,8 +174,8 @@ for temp in 0.1 0.2 0.4; do
     run_case "03_model_fp16_20260519_${label}_x${tag}" "$scale" \
       --controller model \
       --model-backend llama \
-      --gguf-path $MODELS_ROOT/model-fp16-20260519.gguf \
-      --llama-server $LLAMA_CPP_ROOT/build-cuda/bin/llama-server \
+      --gguf-path "$MODELS_ROOT/model-fp16-20260519.gguf" \
+      --llama-server "$LLAMA_SERVER" \
       --ngl 99 \
       --threads 8 \
       --ctx-size 4096 \
@@ -188,7 +188,7 @@ for temp in 0.1 0.2 0.4; do
     run_case "04_qwen3_4b_base_${BASE_ONLINE_CONTROL_MODE}_${label}_x${tag}" "$scale" \
       --controller model \
       --model-backend hf \
-      --hf-model-path $MODELS_ROOT/Qwen3-4B \
+      --hf-model-path "$MODELS_ROOT/Qwen3-4B" \
       --hf-dtype bfloat16 \
       --prompt-format deepsignal_json \
       --hf-use-chat-template \

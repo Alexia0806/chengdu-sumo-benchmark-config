@@ -22,9 +22,17 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 : "${DEFAULT_TARGET_TLS:=cluster_4550018629_4550018932 cluster_432429373_5213238455 cluster_1916386555_432429395}"
 : "${DEFAULT_UNBALANCED_X15_TLS:=cluster_432429373_5213238455}"
 : "${DEFAULT_TARGET_PEAK_ROUTE_SELECTION:=diverse_sources}"
-: "${PYTHON_BIN:=$TSC_CYCLE_ROOT/.venv/bin/python}"
+if [[ -n "${PYTHON_BIN:-}" ]]; then
+  PYTHON_BIN_WAS_SET=1
+else
+  PYTHON_BIN_WAS_SET=0
+  PYTHON_BIN="$TSC_CYCLE_ROOT/.venv/bin/python"
+fi
 if [[ -z "${SYSTEM_PYTHON_BIN:-}" ]]; then
   SYSTEM_PYTHON_BIN="$(command -v python3 || command -v python || printf 'python3')"
+fi
+if [[ "$PYTHON_BIN_WAS_SET" == "0" && ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="$SYSTEM_PYTHON_BIN"
 fi
 : "${LLAMA_CPP_ROOT:=$AUTODL_ROOT/llama.cpp.vendor}"
 : "${LLAMA_SERVER:=$LLAMA_CPP_ROOT/build-cuda/bin/llama-server}"

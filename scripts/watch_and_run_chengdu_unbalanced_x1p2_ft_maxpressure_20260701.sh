@@ -3,7 +3,6 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
 PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
-PATCH_ROOT="${PATCH_ROOT:-$PATCH_ROOT}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_unbalanced_x1p2_ft_maxpressure_20260701_auto}"
 LOG_FILE="${LOG_FILE:-$PATCH_ROOT/watcher.log}"
 POLL_SECONDS="${POLL_SECONDS:-120}"

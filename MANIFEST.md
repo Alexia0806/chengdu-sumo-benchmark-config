@@ -27,6 +27,8 @@
 | `scripts/recompute_target_peak_fairness_metrics.py` | Recompute target-peak fairness metrics from completed runs. |
 | `scripts/summarize_chengdu_peak_matrix.py` | Summarize Chengdu peak matrix results. |
 | `scripts/summarize_step_metric_windows.py` | Recompute metric windows from `step_metrics.jsonl`. |
+| `scripts/check_repo_quality.sh` | Run lightweight shell syntax, Python compile, unit-test, and hardcoded-path checks. |
+| `scripts/env_defaults.sh` | Shared runtime path defaults for operational shell launchers. |
 
 ## Operational Scripts
 

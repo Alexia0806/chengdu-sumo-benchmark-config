@@ -6,7 +6,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_base_json_no_reasoning_20260618}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
-PYTHON_BIN="$TSC_CYCLE_ROOT/.venv/bin/python"
+PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 TEMPERATURE="${TEMPERATURE:-0.2}"
 TEMP_LABEL="${TEMP_LABEL:-temp02}"
 TARGET_TLS="${TARGET_TLS:-$DEFAULT_TARGET_TLS}"
@@ -95,7 +95,7 @@ log_event "ALL_START run_root=$RUN_ROOT temperature=$TEMPERATURE prompt_format=d
 run_model_matrix "base9b_hf_json" \
   --controller model \
   --model-backend hf \
-  --hf-model-path $MODELS_ROOT/Qwen3.5-9B-Base \
+  --hf-model-path "$MODELS_ROOT/Qwen3.5-9B-Base" \
   --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
   --hf-dtype bfloat16 > "$LOG_DIR/base9b.group.log" 2>&1 &
 pid_9b=$!
@@ -103,7 +103,7 @@ pid_9b=$!
 run_model_matrix "base4b_hf_json" \
   --controller model \
   --model-backend hf \
-  --hf-model-path $MODELS_ROOT/Qwen3-4B \
+  --hf-model-path "$MODELS_ROOT/Qwen3-4B" \
   --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
   --hf-use-chat-template \
   --no-hf-chat-template-enable-thinking \

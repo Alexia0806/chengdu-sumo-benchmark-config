@@ -6,7 +6,6 @@ RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_j54_reason
 SCRIPT="${SCRIPT:-$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py}"
 PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 BENCHMARK_ROOT="${BENCHMARK_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
-SUMO_HOME="${SUMO_HOME:-$SUMO_HOME}"
 SCENARIO="${SCENARIO:-sumo_llm}"
 TL_ID="${TL_ID:-${DEFAULT_TARGET_TLS%% *}}"
 PROMPT_FORMAT="${PROMPT_FORMAT:-deepsignal_solution_first}"
