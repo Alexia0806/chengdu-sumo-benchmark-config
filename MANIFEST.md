@@ -39,9 +39,6 @@
 | Path | Purpose |
 | --- | --- |
 | `README.md` | Project setup, usage, configuration, and development guide. |
-| `README_DeepSignal_20260519_HF.md` | English model-card draft for DeepSignal-CyclePlan-4B-V2. |
-| `README_DeepSignal_20260519_HF_zh.md` | Chinese model-card draft for DeepSignal-CyclePlan-4B-V2. |
-| `images/` | Comparison images referenced by model-card drafts. |
 | `lmstudio_deepsignal_20260519_chat_template.jinja` | LM Studio chat template for the DeepSignal prompt format. |
 | `tests/` | Lightweight unit tests for parsing, validation, and route-selection helpers. |
 | `requirements.yaml` | System, Python, backend, and path-variable requirements for full closed-loop benchmark runs. |
@@ -49,3 +46,7 @@
 ## Excluded From Git
 
 Local run outputs, caches, copied upstream repositories, temporary files, model artifacts, dashboard exports, and large SUMO tripinfo outputs are intentionally excluded. Keep generated files under `runs/`, `outputs/`, or `tmp/`.
+
+## Excluded From Clean Packages
+
+Clean `git archive` packages also exclude historical model-card drafts, comparison images, local output directories, logs, CSV/JSONL summaries, and compressed run artifacts. The package should contain runnable code, SUMO scenarios, tests, configuration docs, and launch scripts, not previous experiment results.

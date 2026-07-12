@@ -2,7 +2,7 @@
 
 这个仓库用于在成都 SUMO 路网中评测交通信号控制器。程序通过 TraCI 驱动 SUMO 仿真，在固定时间、max-pressure 或模型控制模式下生成下一周期绿灯配时，执行控制后记录队列、通行、延误、tripinfo ATT/AWT 和模型可控性指标。
 
-仓库只保存可复现实验需要的代码、SUMO 场景和文档。模型权重、完整运行结果、远端缓存和上游仓库副本不应提交到 Git。
+仓库只保存可复现实验需要的代码、SUMO 场景和文档。模型权重、完整运行结果、远端缓存和上游仓库副本不应提交到 Git。交付打包时 `.gitattributes` 会排除历史实验图片、模型卡草稿、本地输出和日志，避免旧结果进入新的实验包。
 
 ## 核心功能
 
@@ -28,8 +28,8 @@
 │   └── check_repo_quality.sh                              # 轻量质量检查
 ├── tests/                                # 不依赖 SUMO/模型的单元测试
 ├── requirements.yaml                     # 系统、模型、路径配置清单
-├── MANIFEST.md                           # 仓库资产说明
-└── README_DeepSignal_20260519_HF*.md      # DeepSignal-CyclePlan-4B-V2 模型卡草稿
+├── .gitattributes                        # git archive 打包排除规则
+└── MANIFEST.md                           # 核心资产说明
 ```
 
 ## 环境准备
