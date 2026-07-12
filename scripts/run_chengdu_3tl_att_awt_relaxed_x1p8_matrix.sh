@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
+source "$SCRIPT_DIR/lib/chengdu_runner_common.sh"
 
 PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
-BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
+BENCH_ROOT="$(resolve_benchmark_root "$PROJECT_ROOT")"
 RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_formal_gptoss_qwen4b_gemma12_qwen36_deepsignal4b_x1p2_x1p5_temp02_$(date +%Y%m%d)}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
 PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
@@ -55,53 +56,15 @@ DEEPSIGNAL4B_PROMPT_FORMAT="${DEEPSIGNAL4B_PROMPT_FORMAT:-deepsignal}"
 TLS_FILE="$RUN_ROOT/chengdu_3tl_tls.csv"
 LOG_DIR="$RUN_ROOT/logs"
 ORCH_LOG="$LOG_DIR/orchestrator.log"
-EXPECTED_TL_COUNT="$(wc -w <<< "$TARGET_TLS" | tr -d ' ')"
+EXPECTED_TL_COUNT="$(count_words "$TARGET_TLS")"
 
-mkdir -p "$RUN_ROOT" "$LOG_DIR" "$RUN_ROOT/scripts"
-cp "$0" "$RUN_ROOT/scripts/$(basename "$0")"
-echo "$$" > "$RUN_ROOT/orchestrator.pid"
+prepare_run_workspace "$RUN_ROOT" "$LOG_DIR" "$0"
+write_tls_file "$TLS_FILE" sumo_llm "$TARGET_TLS"
 
-{
-  echo "scenario,tl_id"
-  for tl_id in $TARGET_TLS; do
-    echo "sumo_llm,$tl_id"
-  done
-} > "$TLS_FILE"
-
-TARGET_TLS_JSON="$(
-  TARGET_TLS="$TARGET_TLS" python3 - <<'PY'
-import json
-import os
-
-print(json.dumps(os.environ["TARGET_TLS"].split()))
-PY
-)"
-
-DEMAND_SCALES_JSON="$(
-  DEMAND_SCALES="$DEMAND_SCALES" python3 - <<'PY'
-import json
-import os
-
-print(json.dumps([float(value) for value in os.environ["DEMAND_SCALES"].split()]))
-PY
-)"
-
-TEMPERATURES_JSON="$(
-  TEMPERATURES="$TEMPERATURES" python3 - <<'PY'
-import json
-import os
-
-print(json.dumps([float(value) for value in os.environ["TEMPERATURES"].split()]))
-PY
-)"
-
-MAX_DEMAND_SCALE="$(
-  DEMAND_SCALES="$DEMAND_SCALES" python3 - <<'PY'
-import os
-
-print(max(float(value) for value in os.environ["DEMAND_SCALES"].split()))
-PY
-)"
+TARGET_TLS_JSON="$(words_json "$TARGET_TLS")"
+DEMAND_SCALES_JSON="$(float_words_json "$DEMAND_SCALES")"
+TEMPERATURES_JSON="$(float_words_json "$TEMPERATURES")"
+MAX_DEMAND_SCALE="$(max_float_word "$DEMAND_SCALES")"
 
 target_peak_args=()
 for tl_id in $TARGET_TLS; do
@@ -112,24 +75,6 @@ window_args=()
 if [[ "$ALLOW_NONSTANDARD_WINDOW" == "1" ]]; then
   window_args+=(--allow-nonstandard-window)
 fi
-
-log_event() {
-  local msg="$1"
-  printf '[%s] %s\n' "$(date -Is)" "$msg" | tee -a "$ORCH_LOG"
-}
-
-temp_label() {
-  case "$1" in
-    0.1) echo temp01 ;;
-    0.2) echo temp02 ;;
-    0.4) echo temp04 ;;
-    *) echo "temp${1/./p}" ;;
-  esac
-}
-
-scale_tag() {
-  echo "${1/./p}"
-}
 
 run_case() {
   local case_name="$1"

@@ -32,7 +32,15 @@
 
 ## Operational Scripts
 
-`scripts/run_*.sh`, `scripts/watch_*.sh`, `run_gpt_oss_20b_2tl_unbalanced_x1p5*.sh`, and `watch_gpt_oss_20b_solution.sh` are AutoDL-oriented launch/watch helpers for recorded Chengdu experiment workflows. They source `scripts/env_defaults.sh` so repository, model, SUMO, cache, and run-output paths can be overridden with environment variables instead of editing scripts.
+Current launchers are intentionally small in number:
+
+| Path | Purpose |
+| --- | --- |
+| `scripts/run_chengdu_3tl_att_awt_relaxed_x1p8_matrix.sh` | Formal three-TL matrix runner. |
+| `scripts/run_chengdu_tls_short_probe_fixed_maxpressure.sh` | Short fixed/max-pressure probe for congestion sanity checks and TLS screening. |
+| `scripts/lib/chengdu_runner_common.sh` | Shared shell helpers for runner logging, workspace setup, SUMO config resolution, TLS CSV writing, and matrix metadata formatting. |
+
+Historical one-off launch/watch scripts live under `scripts/archive/` for traceability only. They are excluded from clean packages.
 
 ## Documentation And Tests
 
@@ -49,4 +57,4 @@ Local run outputs, caches, copied upstream repositories, temporary files, model 
 
 ## Excluded From Clean Packages
 
-Clean `git archive` packages also exclude historical model-card drafts, comparison images, local output directories, logs, CSV/JSONL summaries, and compressed run artifacts. The package should contain runnable code, SUMO scenarios, tests, configuration docs, and launch scripts, not previous experiment results.
+Clean `git archive` packages also exclude archived launchers, historical model-card drafts, comparison images, local output directories, logs, CSV/JSONL summaries, and compressed run artifacts. The package should contain runnable code, SUMO scenarios, tests, configuration docs, and current launch scripts, not previous experiment results.

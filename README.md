@@ -20,8 +20,10 @@
 ├── chengdu/                              # 可直接用 SUMO 打开的成都场景
 ├── chengdu_benchmark/scenarios/sumo_llm/ # benchmark runner 使用的成都场景
 ├── scripts/
+│   ├── lib/chengdu_runner_common.sh                       # shell runner 公共函数
 │   ├── deepsignal_cycleplan_benchmark_chengdu_metrics.py  # 主评测入口
 │   ├── run_chengdu_3tl_att_awt_relaxed_x1p8_matrix.sh     # 当前正式矩阵 runner
+│   ├── run_chengdu_tls_short_probe_fixed_maxpressure.sh    # fixed/max-pressure 短 probe
 │   ├── env_defaults.sh                                    # 运行路径默认值
 │   ├── summarize_chengdu_peak_matrix.py                   # 矩阵汇总
 │   ├── summarize_step_metric_windows.py                   # 从 step_metrics 重算窗口
@@ -31,6 +33,24 @@
 ├── .gitattributes                        # git archive 打包排除规则
 └── MANIFEST.md                           # 核心资产说明
 ```
+
+`scripts/archive/` 保存早期远端实验的一次性 runner/watch 脚本，仅用于追溯，不作为当前入口，也不会进入 clean package。
+
+## 成都场景目录关系
+
+`chengdu/` 和 `chengdu_benchmark/scenarios/sumo_llm/` 使用同一份成都路网和需求文件，文件内容对应关系如下：
+
+| 独立场景 | benchmark 场景 | 关系 |
+| --- | --- | --- |
+| `chengdu/chengdu.net.xml` | `chengdu_benchmark/scenarios/sumo_llm/ChengduCity.net.xml` | 内容相同，文件名适配不同 SUMO 配置 |
+| `chengdu/morning_rush_hour.rou.xml` | `chengdu_benchmark/scenarios/sumo_llm/morning_rush_hour.rou.xml` | 内容相同 |
+| `chengdu/rush_hour_flow.rou.xml` | `chengdu_benchmark/scenarios/sumo_llm/rush_hour_flow.rou.xml` | 内容相同 |
+| `chengdu/gui-settings.cfg` | `chengdu_benchmark/scenarios/sumo_llm/gui-settings.cfg` | 内容相同 |
+| `chengdu/chengdu.sumocfg` | `chengdu_benchmark/scenarios/sumo_llm/osm.sumocfg` | 配置文件不同，引用的 net 文件名和仿真结束时间不同 |
+
+`chengdu/` 是便于人工直接打开或快速检查的独立 SUMO 场景，`chengdu.sumocfg` 使用 `chengdu.net.xml`，默认结束时间是 `3599.75s`。
+
+`chengdu_benchmark/scenarios/sumo_llm/` 是程序化 benchmark 布局。runner 通过 `--benchmark-root chengdu_benchmark --scenario sumo_llm` 定位这里的 `osm.sumocfg`，该配置引用 `ChengduCity.net.xml`，结束时间设为 `1e9`，实际 warmup、metric、simulation/drain 窗口由 runner 参数控制。
 
 ## 环境准备
 

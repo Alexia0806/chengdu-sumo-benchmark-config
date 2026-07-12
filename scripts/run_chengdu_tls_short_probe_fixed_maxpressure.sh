@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
+source "$SCRIPT_DIR/lib/chengdu_runner_common.sh"
 
 PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
-if [[ -z "${BENCH_ROOT:-}" ]]; then
-  if [[ -d "$PROJECT_ROOT/chengdu_benchmark" ]]; then
-    BENCH_ROOT="${BENCH_ROOT:-$PROJECT_ROOT/chengdu_benchmark}"
-  else
-    BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
-  fi
-fi
+BENCH_ROOT="$(resolve_benchmark_root "$PROJECT_ROOT")"
 
 PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
@@ -26,9 +21,8 @@ RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_tls_short_
 LOG_DIR="$RUN_ROOT/logs"
 TLS_DIR="$RUN_ROOT/tls"
 SELECTION_DIR="$RUN_ROOT/tls_selection"
-mkdir -p "$RUN_ROOT" "$LOG_DIR" "$TLS_DIR" "$SELECTION_DIR" "$RUN_ROOT/scripts"
-cp "$0" "$RUN_ROOT/scripts/$(basename "$0")" 2>/dev/null || true
-echo "$$" > "$RUN_ROOT/orchestrator.pid"
+prepare_run_workspace "$RUN_ROOT" "$LOG_DIR" "$0"
+mkdir -p "$TLS_DIR" "$SELECTION_DIR"
 
 SUMOCFG="${SUMOCFG:-}"
 TLS_FILE="${TLS_FILE:-}"
@@ -55,28 +49,6 @@ MIN_ARRIVED_RATE_PCT="${MIN_ARRIVED_RATE_PCT:-35}"
 MAX_SOURCE_AVG_QUEUE="${MAX_SOURCE_AVG_QUEUE:-45}"
 MAX_SOURCE_P95_QUEUE="${MAX_SOURCE_P95_QUEUE:-90}"
 
-log_event() {
-  local msg="$1"
-  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$msg" | tee -a "$LOG_DIR/orchestrator.log"
-}
-
-resolve_sumocfg() {
-  if [[ -n "$SUMOCFG" ]]; then
-    echo "$SUMOCFG"
-    return
-  fi
-  for candidate in \
-    "$BENCH_ROOT/sumo_llm/osm.sumocfg" \
-    "$BENCH_ROOT/data/sumo_llm/osm.sumocfg" \
-    "$BENCH_ROOT/DeepSignal/data/sumo_llm/osm.sumocfg"; do
-    if [[ -f "$candidate" ]]; then
-      echo "$candidate"
-      return
-    fi
-  done
-  echo ""
-}
-
 queue_threshold_args=()
 for threshold in $QUEUE_THRESHOLDS; do
   queue_threshold_args+=("$threshold")
@@ -89,7 +61,7 @@ prepare_tls_file() {
     return
   fi
   local sumocfg_path
-  sumocfg_path="$(resolve_sumocfg)"
+  sumocfg_path="$(resolve_sumocfg "$BENCH_ROOT" sumo_llm "$SUMOCFG")"
   if [[ -z "$sumocfg_path" || ! -f "$sumocfg_path" ]]; then
     log_event "ERROR cannot_resolve_sumocfg bench_root=$BENCH_ROOT set SUMOCFG=/path/to/osm.sumocfg or TLS_FILE=/path/to/tls.csv"
     exit 2

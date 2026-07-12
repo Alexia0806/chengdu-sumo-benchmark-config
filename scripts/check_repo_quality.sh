@@ -8,12 +8,7 @@ cd "$REPO_ROOT"
 echo "== bash syntax =="
 while IFS= read -r script; do
   bash -n "$script"
-done < <(find scripts -maxdepth 1 -type f -name '*.sh' -print | sort)
-
-for script in ./*.sh; do
-  [[ -f "$script" ]] || continue
-  bash -n "$script"
-done
+done < <(find scripts \( -path scripts/archive -o -path scripts/archive/\* \) -prune -o -type f -name '*.sh' -print | sort)
 
 echo "== python compile =="
 python3 -m compileall -q scripts tests
