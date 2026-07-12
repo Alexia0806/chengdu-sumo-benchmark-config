@@ -141,7 +141,6 @@ bash scripts/run_chengdu_3tl_att_awt_relaxed_x1p8_matrix.sh
 | demand scale | `1.2 1.5` |
 | temperature | `0.2` |
 | metric window | warmup `300s`，metric `1200s`，即 `300-1500s` |
-| SUMO default | 默认不跑，`RUN_DEFAULT=0` |
 | target peak | `240 vph/route`，每 TL `8` 条 route |
 | target peak route selection | `diverse_sources` |
 | decision interval | `60s` |
@@ -427,13 +426,10 @@ python3 -m compileall -q scripts tests
 
 ## 参考论文和依据
 
-本项目不是逐篇论文的完整复现，而是把交通信号控制 benchmark 中常见、可审计的仿真和评价口径落到成都 SUMO 场景上。
+本项目不是逐篇论文的完整复现，而是把两篇交通信号控制论文中的研究问题和评价口径落到成都 SUMO 场景上。具体指标公式以源码实现为准，核心实现位于 `scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py`。
 
-- SUMO 微观交通仿真：Michael Behrisch, Laura Bieker, Jakob Erdmann, Daniel Krajzewicz, “[SUMO - Simulation of Urban MObility: An Overview](https://eclipse.dev/sumo/documents/simul_2011_3_40_50150.pdf),” SIMUL 2011；以及 D. Krajzewicz 等，“[Recent Development and Applications of SUMO - Simulation of Urban MObility](https://sumo.dlr.de/pdf/sysmea_v5_n34_2012_4.pdf),” 2012。
-- 固定配时和经典信号优化背景：F. V. Webster, “[Traffic Signal Settings](https://books.google.com/books/about/Traffic_Signal_Settings.html?id=c9QOQ4jXK5cC),” Road Research Technical Paper No. 39, 1958。
-- Max-pressure 基线思想：Pravin Varaiya, “[Max pressure control of a network of signalized intersections](https://www.sciencedirect.com/science/article/abs/pii/S0968090X13001782),” Transportation Research Part C, 2013。
-- 压力/队列作为信号控制状态和奖励的依据：Hua Wei 等，“[PressLight: Learning Max Pressure Control to Coordinate Traffic Signals in Arterial Network](https://dl.acm.org/doi/10.1145/3292500.3330949),” KDD 2019。
-- 大规模交通信号 RL benchmark 背景：Huichu Zhang 等，“[CityFlow: A Multi-Agent Reinforcement Learning Environment for Large Scale City Traffic Scenario](https://arxiv.org/abs/1905.05217),” WWW 2019；James Ault and Guni Sharon, “[Reinforcement Learning Benchmarks for Traffic Signal Control](https://openreview.net/forum?id=LqRSh6V0vR),” 2021。
-- LLM 作为信号控制 agent 的背景：LLMLight, “[Large Language Models as Traffic Signal Control Agents](https://arxiv.org/html/2312.16044v1),” arXiv 2023。
+1. Aoyu Pang, Maonan Wang, Man-On Pun, Chung Shue Chen, Xi Xiong. “iLLM-TSC: Integration Reinforcement Learning and Large Language Model for Traffic Signal Control Policy Improvement.” arXiv:2407.06025, 2024.
+   参考点：该论文讨论 RL 交通信号控制在通信退化和长尾事件下的可靠性问题，并用 LLM 对控制策略进行评估和修正。本项目借鉴其“结构化交通状态 + LLM 决策/校验 + 安全约束过滤”的思想，用 strict/relaxed/repaired 指标记录模型输出是否满足可执行控制约束。
 
-这些论文提供了仿真平台、固定配时、max-pressure、队列/延误指标和学习型交通信号控制的背景。本仓库的具体指标公式以源码实现为准，核心实现位于 `scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py`。
+2. Xiang (Ben) Song, Bin Zhou, Dongfang Ma. “Cooperative traffic signal control through a counterfactual multi-agent deep actor critic approach.” Transportation Research Part C, 160:104528, 2024. DOI: `10.1016/j.trc.2024.104528`.
+   参考点：该论文面向多路口协同信号控制，使用 queue length、average travel time delay、throughput 等指标比较控制方法。本项目的三路口正式矩阵沿用这些核心评价维度，并额外区分目标路口进口车道唯一车辆数、相位 halting queue、tripinfo ATT/AWT 和 completion ratio。
