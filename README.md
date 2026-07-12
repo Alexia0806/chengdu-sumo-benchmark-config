@@ -85,6 +85,48 @@ python3 -m pip install torch transformers peft huggingface_hub
 export OPENAI_API_KEY=...
 ```
 
+## 模型文件准备
+
+仓库不包含模型权重，也不提供下载脚本。正式 runner 只读取本地路径；请先把模型放到 `MODELS_ROOT`，或通过环境变量覆盖每个模型的实际位置。
+
+推荐目录约定：
+
+```bash
+export MODELS_ROOT=/path/to/models
+mkdir -p "$MODELS_ROOT"
+
+export GPTOSS20B_PATH="$MODELS_ROOT/gpt-oss-20b"
+export QWEN4B_PATH="$MODELS_ROOT/Qwen3-4B"
+export GEMMA12B_PATH="$MODELS_ROOT/gemma-3-12b-it"
+export QWEN36_PATH="$MODELS_ROOT/Qwen3.6-27B"
+export DEEPSIGNAL4B_GGUF_PATH="$MODELS_ROOT/model-fp16-20260519.gguf"
+```
+
+Hugging Face 模型可用 `huggingface-cli` 或 `huggingface_hub.snapshot_download` 手工下载。示例：
+
+```bash
+python3 -m pip install huggingface_hub
+
+# 如果需要镜像，可显式设置；不需要时不要设置。
+export HF_ENDPOINT=https://hf-mirror.com
+
+huggingface-cli download Qwen/Qwen3-4B \
+  --local-dir "$MODELS_ROOT/Qwen3-4B" \
+  --resume-download
+
+huggingface-cli download google/gemma-3-12b-it \
+  --local-dir "$MODELS_ROOT/gemma-3-12b-it" \
+  --resume-download
+```
+
+`GPT-OSS-20B` 和 `Qwen3.6-27B` 使用你实际有权限访问的 Hugging Face repo 或本地 checkpoint，下载后分别放到 `$GPTOSS20B_PATH` 和 `$QWEN36_PATH`。如果 repo 需要鉴权，先执行：
+
+```bash
+huggingface-cli login
+```
+
+`DeepSignal-CyclePlan-4B-V2` 使用 GGUF 文件，正式配置默认文件名是 `model-fp16-20260519.gguf`。把该文件放到 `$DEEPSIGNAL4B_GGUF_PATH`，并确保 `LLAMA_SERVER` 指向可执行的 `llama-server`。
+
 ## 快速检查
 
 检查 SUMO 场景：

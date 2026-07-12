@@ -24,7 +24,7 @@ python:
     - name: peft
       required_for: ["HF adapter loading"]
     - name: huggingface_hub
-      required_for: ["scripts/check_hf_model_access.py", "model download helpers"]
+      required_for: ["scripts/check_hf_model_access.py", "manual Hugging Face model acquisition described in README.md"]
 
 model_backends:
   llama:
