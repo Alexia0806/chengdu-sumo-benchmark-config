@@ -19,22 +19,23 @@
 .
 ├── chengdu/                              # 可直接用 SUMO 打开的成都场景
 ├── chengdu_benchmark/scenarios/sumo_llm/ # benchmark runner 使用的成都场景
+├── src/sumo_benchmark/
+│   ├── benchmark/                        # 闭环仿真 runner 的功能代码
+│   ├── tools/                            # 汇总、筛选、排序、检查等工具代码
+│   └── shell/                            # shell runner 共享逻辑
 ├── scripts/
-│   ├── lib/chengdu_runner_common.sh                       # shell runner 公共函数
-│   ├── deepsignal_cycleplan_benchmark_chengdu_metrics.py  # 主评测入口
-│   ├── run_chengdu_3tl_att_awt_relaxed_x1p8_matrix.sh     # 当前正式矩阵 runner
-│   ├── run_chengdu_tls_short_probe_fixed_maxpressure.sh    # fixed/max-pressure 短 probe
-│   ├── env_defaults.sh                                    # 运行路径默认值
-│   ├── summarize_chengdu_peak_matrix.py                   # 矩阵汇总
-│   ├── summarize_step_metric_windows.py                   # 从 step_metrics 重算窗口
-│   └── check_repo_quality.sh                              # 轻量质量检查
+│   ├── deepsignal_cycleplan_benchmark_chengdu_metrics.py  # 兼容启动 wrapper
+│   ├── run_chengdu_3tl_att_awt_relaxed_x1p8_matrix.sh     # 正式矩阵启动脚本
+│   ├── run_chengdu_tls_short_probe_fixed_maxpressure.sh    # fixed/max-pressure probe 启动脚本
+│   └── check_repo_quality.sh                              # 质量检查启动脚本
 ├── tests/                                # 不依赖 SUMO/模型的单元测试
 ├── requirements.yaml                     # 系统、模型、路径配置清单
+├── pyproject.toml                        # src-layout 包配置
 ├── .gitattributes                        # git archive 打包排除规则
 └── MANIFEST.md                           # 核心资产说明
 ```
 
-`scripts/archive/` 保存早期远端实验的一次性 runner/watch 脚本，仅用于追溯，不作为当前入口，也不会进入 clean package。
+`scripts/` 只保留启动层，真实功能代码在 `src/sumo_benchmark/`。保留 `scripts/` wrapper 是为了让旧命令继续可用。
 
 ## 成都场景目录关系
 
@@ -139,6 +140,15 @@ sumo -c chengdu/chengdu.sumocfg
 
 ```bash
 python3 scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py \
+  --benchmark-root chengdu_benchmark \
+  --scenario sumo_llm \
+  --list-scenarios
+```
+
+等价包内模块入口：
+
+```bash
+PYTHONPATH=src python3 -m sumo_benchmark.benchmark.chengdu_metrics \
   --benchmark-root chengdu_benchmark \
   --scenario sumo_llm \
   --list-scenarios
@@ -266,6 +276,12 @@ bash scripts/run_chengdu_3tl_att_awt_relaxed_x1p8_matrix.sh
 
 ```bash
 python3 scripts/summarize_chengdu_peak_matrix.py <RUN_ROOT>
+```
+
+等价包内模块入口：
+
+```bash
+PYTHONPATH=src python3 -m sumo_benchmark.tools.summarize_chengdu_peak_matrix <RUN_ROOT>
 ```
 
 生成：
@@ -488,7 +504,7 @@ python3 -m compileall -q scripts tests
 
 ## 参考论文和依据
 
-本项目不是逐篇论文的完整复现，而是把两篇交通信号控制论文中的研究问题和评价口径落到成都 SUMO 场景上。具体指标公式以源码实现为准，核心实现位于 `scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py`。
+本项目不是逐篇论文的完整复现，而是把两篇交通信号控制论文中的研究问题和评价口径落到成都 SUMO 场景上。具体指标公式以源码实现为准，核心实现位于 `src/sumo_benchmark/benchmark/chengdu_metrics.py`。
 
 1. Aoyu Pang, Maonan Wang, Man-On Pun, Chung Shue Chen, Xi Xiong. “iLLM-TSC: Integration Reinforcement Learning and Large Language Model for Traffic Signal Control Policy Improvement.” arXiv:2407.06025, 2024.
    参考点：该论文讨论 RL 交通信号控制在通信退化和长尾事件下的可靠性问题，并用 LLM 对控制策略进行评估和修正。本项目借鉴其“结构化交通状态 + LLM 决策/校验 + 安全约束过滤”的思想，用 strict/relaxed/repaired 指标记录模型输出是否满足可执行控制约束。

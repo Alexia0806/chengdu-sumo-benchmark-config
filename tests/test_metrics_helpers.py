@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import sys
 import types
 import unittest
@@ -8,20 +7,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-METRICS_PATH = ROOT / "scripts" / "deepsignal_cycleplan_benchmark_chengdu_metrics.py"
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
-
-def load_metrics_module():
-    spec = importlib.util.spec_from_file_location("chengdu_metrics", METRICS_PATH)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot import {METRICS_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-metrics = load_metrics_module()
+from sumo_benchmark.benchmark import chengdu_metrics as metrics  # noqa: E402
 
 
 def valid_args(**overrides):

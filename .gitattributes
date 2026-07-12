@@ -3,8 +3,6 @@ images export-ignore
 images/** export-ignore
 README_DeepSignal_20260519_HF.md export-ignore
 README_DeepSignal_20260519_HF_zh.md export-ignore
-scripts/archive export-ignore
-scripts/archive/** export-ignore
 runs export-ignore
 runs/** export-ignore
 outputs export-ignore
