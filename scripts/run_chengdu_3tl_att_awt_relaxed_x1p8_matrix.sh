@@ -4,7 +4,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env_defaults.sh"
 
 PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 BENCH_ROOT="${DEEPSIGNAL_BENCH_ROOT:-$PROJECT_ROOT/DeepSignal-benchmark}"
-RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_att_awt_relaxed_nochat_thinking_x1p2_x1p5_temp02_$(date +%Y%m%d)}"
+RUN_ROOT="${RUN_ROOT:-$PROJECT_ROOT/runs/deepsignal_cycleplan/chengdu_3tl_formal_gptoss_qwen4b_gemma12_qwen36_deepsignal4b_x1p2_x1p5_temp02_$(date +%Y%m%d)}"
 RUNNER="$PROJECT_ROOT/scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py"
 PYTHON_BIN="${PYTHON_BIN:-$TSC_CYCLE_ROOT/.venv/bin/python}"
 DEMAND_SCALES="${DEMAND_SCALES:-1.2 1.5}"
@@ -26,18 +26,32 @@ N_PREDICT="${N_PREDICT:-512}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-1800}"
 HF_DTYPE="${HF_DTYPE:-bfloat16}"
 HF_DEVICE_MAP="${HF_DEVICE_MAP:-auto}"
-PARALLEL_QWEN="${PARALLEL_QWEN:-1}"
-RETRY_FAILED_SEQUENTIAL="${RETRY_FAILED_SEQUENTIAL:-1}"
-RUN_DEFAULT="${RUN_DEFAULT:-1}"
+HF_N_PREDICT="${HF_N_PREDICT:-$N_PREDICT}"
+HF_TIMEOUT_SEC="${HF_TIMEOUT_SEC:-$TIMEOUT_SEC}"
+GPTOSS_N_PREDICT="${GPTOSS_N_PREDICT:-1024}"
+GPTOSS_TIMEOUT_SEC="${GPTOSS_TIMEOUT_SEC:-$TIMEOUT_SEC}"
+QWEN36_N_PREDICT="${QWEN36_N_PREDICT:-$N_PREDICT}"
+QWEN36_TIMEOUT_SEC="${QWEN36_TIMEOUT_SEC:-$TIMEOUT_SEC}"
+FP16_N_PREDICT="${FP16_N_PREDICT:-$N_PREDICT}"
+FP16_TIMEOUT_SEC="${FP16_TIMEOUT_SEC:-$TIMEOUT_SEC}"
+RUN_DEFAULT="${RUN_DEFAULT:-0}"
+RUN_GPTOSS20B="${RUN_GPTOSS20B:-1}"
 RUN_QWEN4B="${RUN_QWEN4B:-1}"
-RUN_QWEN9B="${RUN_QWEN9B:-1}"
 RUN_GEMMA12B="${RUN_GEMMA12B:-1}"
-RUN_PHI4="${RUN_PHI4:-0}"
+RUN_QWEN36="${RUN_QWEN36:-1}"
+RUN_DEEPSIGNAL4B="${RUN_DEEPSIGNAL4B:-1}"
 
+GPTOSS20B_PATH="${GPTOSS20B_PATH:-$MODELS_ROOT/gpt-oss-20b}"
+QWEN4B_PATH="${QWEN4B_PATH:-$MODELS_ROOT/Qwen3-4B}"
+GEMMA12B_PATH="${GEMMA12B_PATH:-$MODELS_ROOT/gemma-3-12b-it}"
+QWEN36_PATH="${QWEN36_PATH:-$MODELS_ROOT/Qwen3.6-27B}"
+DEEPSIGNAL4B_GGUF_PATH="${DEEPSIGNAL4B_GGUF_PATH:-$MODELS_ROOT/model-fp16-20260519.gguf}"
+
+GPTOSS20B_PROMPT_FORMAT="${GPTOSS20B_PROMPT_FORMAT:-deepsignal_solution_first}"
 QWEN4B_PROMPT_FORMAT="${QWEN4B_PROMPT_FORMAT:-deepsignal}"
-QWEN9B_PROMPT_FORMAT="${QWEN9B_PROMPT_FORMAT:-deepsignal}"
 GEMMA12B_PROMPT_FORMAT="${GEMMA12B_PROMPT_FORMAT:-deepsignal}"
-PHI4_PROMPT_FORMAT="${PHI4_PROMPT_FORMAT:-deepsignal}"
+QWEN36_PROMPT_FORMAT="${QWEN36_PROMPT_FORMAT:-deepsignal_json}"
+DEEPSIGNAL4B_PROMPT_FORMAT="${DEEPSIGNAL4B_PROMPT_FORMAT:-deepsignal}"
 TLS_FILE="$RUN_ROOT/chengdu_3tl_tls.csv"
 LOG_DIR="$RUN_ROOT/logs"
 ORCH_LOG="$LOG_DIR/orchestrator.log"
@@ -184,21 +198,22 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
     "metric_start_second": $WARMUP_SECONDS,
     "metric_end_second": $((WARMUP_SECONDS + METRIC_SECONDS))
   },
-  "excluded_model_groups": ["Fine-tuned 9B", "model-fp16-20260519.gguf", "first_min_green"],
+  "excluded_model_groups": ["SUMO default", "Qwen3.5 9B", "Phi-4", "first_min_green"],
   "model_groups": [
-    "SUMO default",
+    "GPT-OSS-20B",
     "Qwen3 4B base no-chat thinking",
-    "Qwen3.5 9B base no-chat thinking",
     "Gemma 3 12B it no-chat thinking",
-    "Phi-4 no-chat thinking"
+    "Qwen3.6 27B",
+    "DeepSignal-CyclePlan-4B-V2"
   ],
   "prompt_policy": {
-    "base_models_chat_template": false,
+    "base_models_chat_template": "per_model",
     "base_prompt_formats": {
+      "gpt_oss_20b": "$GPTOSS20B_PROMPT_FORMAT",
       "qwen3_4b_base": "$QWEN4B_PROMPT_FORMAT",
-      "qwen35_9b_base": "$QWEN9B_PROMPT_FORMAT",
       "gemma3_12b_it": "$GEMMA12B_PROMPT_FORMAT",
-      "phi4": "$PHI4_PROMPT_FORMAT"
+      "qwen36_27b": "$QWEN36_PROMPT_FORMAT",
+      "deepsignal_cycleplan_4b_v2": "$DEEPSIGNAL4B_PROMPT_FORMAT"
     },
     "reasoning_max_chars": $DEEPSIGNAL_REASONING_MAX_CHARS,
     "base_lenient_json_extraction": true,
@@ -234,7 +249,7 @@ cat > "$RUN_ROOT/experiment_matrix.json" <<JSON
 JSON
 
 log_event "RUN_START run_root=$RUN_ROOT online_control_mode=$ONLINE_CONTROL_MODE"
-log_event "MATRIX tls=$TARGET_TLS scales=$DEMAND_SCALES temps=$TEMPERATURES run_default=$RUN_DEFAULT run_qwen4b=$RUN_QWEN4B run_qwen9b=$RUN_QWEN9B run_gemma12b=$RUN_GEMMA12B run_phi4=$RUN_PHI4 chat_template=0 queue_thresholds=10,20,30,40"
+log_event "MATRIX tls=$TARGET_TLS scales=$DEMAND_SCALES temps=$TEMPERATURES run_default=$RUN_DEFAULT run_gptoss20b=$RUN_GPTOSS20B run_qwen4b=$RUN_QWEN4B run_gemma12b=$RUN_GEMMA12B run_qwen36=$RUN_QWEN36 run_deepsignal4b=$RUN_DEEPSIGNAL4B queue_thresholds=10,20,30,40"
 
 run_default_group() {
   for scale in $DEMAND_SCALES; do
@@ -250,6 +265,7 @@ run_hf_model_group() {
   local case_prefix="$2"
   local model_path="$3"
   local prompt_format="$4"
+  shift 4
 
   log_event "GROUP_START $group_name model_path=$model_path prompt_format=$prompt_format chat_template=0"
   for temp in $TEMPERATURES; do
@@ -268,42 +284,108 @@ run_hf_model_group() {
         --hf-skip-special-tokens \
         --temperature "$temp" \
         --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
-        --model-fail-policy keep_default || return $?
+        --model-fail-policy keep_default \
+        "$@" || return $?
     done
   done
   log_event "GROUP_DONE $group_name"
+}
+
+run_gptoss20b_group() {
+  log_event "GROUP_START gptoss20b model_path=$GPTOSS20B_PATH prompt_format=$GPTOSS20B_PROMPT_FORMAT chat_template=single_user"
+  for temp in $TEMPERATURES; do
+    label="$(temp_label "$temp")"
+    for scale in $DEMAND_SCALES; do
+      tag="$(scale_tag "$scale")"
+      HF_ATTN_IMPLEMENTATION=eager HF_EXPERTS_IMPLEMENTATION=eager \
+      run_case "08_gpt_oss_20b_solution_chattemplate_${BASE_ONLINE_CONTROL_MODE}_${GPTOSS20B_PROMPT_FORMAT}_${label}_x${tag}" "$scale" \
+        --controller model \
+        --model-backend hf \
+        --hf-model-path "$GPTOSS20B_PATH" \
+        --hf-dtype auto \
+        --hf-device-map "$HF_DEVICE_MAP" \
+        --prompt-format "$GPTOSS20B_PROMPT_FORMAT" \
+        --hf-use-chat-template \
+        --hf-chat-template-message-mode single_user \
+        --no-hf-chat-template-enable-thinking \
+        --hf-skip-special-tokens \
+        --temperature "$temp" \
+        --n-predict "$GPTOSS_N_PREDICT" \
+        --timeout-sec "$GPTOSS_TIMEOUT_SEC" \
+        --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
+        --model-fail-policy keep_default || return $?
+    done
+  done
+  log_event "GROUP_DONE gptoss20b"
 }
 
 run_qwen4b_group() {
   run_hf_model_group \
     "qwen4b" \
     "04_qwen3_4b_base_nochat" \
-    "$MODELS_ROOT/Qwen3-4B" \
+    "$QWEN4B_PATH" \
     "$QWEN4B_PROMPT_FORMAT"
-}
-
-run_qwen9b_group() {
-  run_hf_model_group \
-    "qwen9b" \
-    "02_qwen35_9b_base_nochat" \
-    "$MODELS_ROOT/Qwen3.5-9B-Base" \
-    "$QWEN9B_PROMPT_FORMAT"
 }
 
 run_gemma12b_group() {
   run_hf_model_group \
     "gemma12b" \
     "05_gemma3_12b_it_nochat" \
-    "$MODELS_ROOT/gemma-3-12b-it" \
+    "$GEMMA12B_PATH" \
     "$GEMMA12B_PROMPT_FORMAT"
 }
 
-run_phi4_group() {
-  run_hf_model_group \
-    "phi4" \
-    "06_phi4_nochat" \
-    "$MODELS_ROOT/phi-4" \
-    "$PHI4_PROMPT_FORMAT"
+run_qwen36_group() {
+  log_event "GROUP_START qwen36 model_path=$QWEN36_PATH prompt_format=$QWEN36_PROMPT_FORMAT chat_template=split_system_user"
+  for temp in $TEMPERATURES; do
+    label="$(temp_label "$temp")"
+    for scale in $DEMAND_SCALES; do
+      tag="$(scale_tag "$scale")"
+      run_case "07_qwen36_27b_chattemplate_${BASE_ONLINE_CONTROL_MODE}_${QWEN36_PROMPT_FORMAT}_${label}_x${tag}" "$scale" \
+        --controller model \
+        --model-backend hf \
+        --hf-model-path "$QWEN36_PATH" \
+        --hf-dtype "$HF_DTYPE" \
+        --hf-device-map "$HF_DEVICE_MAP" \
+        --prompt-format "$QWEN36_PROMPT_FORMAT" \
+        --hf-use-chat-template \
+        --hf-chat-template-message-mode split_system_user \
+        --no-hf-chat-template-enable-thinking \
+        --hf-skip-special-tokens \
+        --temperature "$temp" \
+        --n-predict "$QWEN36_N_PREDICT" \
+        --timeout-sec "$QWEN36_TIMEOUT_SEC" \
+        --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
+        --model-fail-policy keep_default || return $?
+    done
+  done
+  log_event "GROUP_DONE qwen36"
+}
+
+run_deepsignal4b_group() {
+  log_event "GROUP_START deepsignal4b model_path=$DEEPSIGNAL4B_GGUF_PATH prompt_format=$DEEPSIGNAL4B_PROMPT_FORMAT backend=llama"
+  for temp in $TEMPERATURES; do
+    label="$(temp_label "$temp")"
+    for scale in $DEMAND_SCALES; do
+      tag="$(scale_tag "$scale")"
+      run_case "03_deepsignal_cycleplan_4b_v2_${BASE_ONLINE_CONTROL_MODE}_${DEEPSIGNAL4B_PROMPT_FORMAT}_${label}_x${tag}" "$scale" \
+        --controller model \
+        --model-backend llama \
+        --gguf-path "$DEEPSIGNAL4B_GGUF_PATH" \
+        --llama-server "$LLAMA_SERVER" \
+        --ngl 99 \
+        --threads 8 \
+        --ctx-size 4096 \
+        --server-startup-sec 240 \
+        --prompt-format "$DEEPSIGNAL4B_PROMPT_FORMAT" \
+        --temperature "$temp" \
+        --n-predict "$FP16_N_PREDICT" \
+        --timeout-sec "$FP16_TIMEOUT_SEC" \
+        --online-control-mode "$BASE_ONLINE_CONTROL_MODE" \
+        --model-fail-policy keep_default || return $?
+    done
+  done
+  log_event "GROUP_DONE deepsignal4b"
 }
 
 if [[ "$RUN_DEFAULT" == "1" ]]; then
@@ -312,63 +394,16 @@ else
   log_event "SKIP_GROUP default run_default=$RUN_DEFAULT"
 fi
 
-failed_qwen_groups=()
-if [[ "$RUN_QWEN4B" == "1" || "$RUN_QWEN9B" == "1" ]]; then
-if [[ "$PARALLEL_QWEN" == "1" ]]; then
-  log_event "QWEN_PARALLEL_START"
-  qwen4b_pid=""
-  qwen9b_pid=""
-  if [[ "$RUN_QWEN4B" == "1" ]]; then
-    (run_qwen4b_group) > "$LOG_DIR/qwen4b.worker.log" 2>&1 &
-    qwen4b_pid=$!
-    echo "$qwen4b_pid" > "$LOG_DIR/qwen4b.worker.pid"
-  else
-    log_event "SKIP_GROUP qwen4b run_qwen4b=$RUN_QWEN4B"
-  fi
-
-  if [[ "$RUN_QWEN9B" == "1" ]]; then
-    (run_qwen9b_group) > "$LOG_DIR/qwen9b.worker.log" 2>&1 &
-    qwen9b_pid=$!
-    echo "$qwen9b_pid" > "$LOG_DIR/qwen9b.worker.pid"
-  else
-    log_event "SKIP_GROUP qwen9b run_qwen9b=$RUN_QWEN9B"
-  fi
-
-  if [[ -n "$qwen4b_pid" ]]; then
-    wait "$qwen4b_pid" || failed_qwen_groups+=("qwen4b")
-  fi
-  if [[ -n "$qwen9b_pid" ]]; then
-    wait "$qwen9b_pid" || failed_qwen_groups+=("qwen9b")
-  fi
-  log_event "QWEN_PARALLEL_DONE failed_groups=${failed_qwen_groups[*]:-none}"
+if [[ "$RUN_GPTOSS20B" == "1" ]]; then
+  run_gptoss20b_group
 else
-  if [[ "$RUN_QWEN4B" == "1" ]]; then
-    run_qwen4b_group || failed_qwen_groups+=("qwen4b")
-  else
-    log_event "SKIP_GROUP qwen4b run_qwen4b=$RUN_QWEN4B"
-  fi
-  if [[ "$RUN_QWEN9B" == "1" ]]; then
-    run_qwen9b_group || failed_qwen_groups+=("qwen9b")
-  else
-    log_event "SKIP_GROUP qwen9b run_qwen9b=$RUN_QWEN9B"
-  fi
-fi
-else
-  log_event "SKIP_GROUP qwen run_qwen4b=$RUN_QWEN4B run_qwen9b=$RUN_QWEN9B"
+  log_event "SKIP_GROUP gptoss20b run_gptoss20b=$RUN_GPTOSS20B"
 fi
 
-if [[ "${#failed_qwen_groups[@]}" -gt 0 && "$RETRY_FAILED_SEQUENTIAL" == "1" ]]; then
-  log_event "QWEN_RETRY_SEQUENTIAL failed_groups=${failed_qwen_groups[*]}"
-  for failed_group in "${failed_qwen_groups[@]}"; do
-    if [[ "$failed_group" == "qwen4b" ]]; then
-      run_qwen4b_group
-    elif [[ "$failed_group" == "qwen9b" ]]; then
-      run_qwen9b_group
-    fi
-  done
-elif [[ "${#failed_qwen_groups[@]}" -gt 0 ]]; then
-  log_event "QWEN_FAILED_NO_RETRY failed_groups=${failed_qwen_groups[*]}"
-  exit 1
+if [[ "$RUN_QWEN4B" == "1" ]]; then
+  run_qwen4b_group
+else
+  log_event "SKIP_GROUP qwen4b run_qwen4b=$RUN_QWEN4B"
 fi
 
 if [[ "$RUN_GEMMA12B" == "1" ]]; then
@@ -377,10 +412,16 @@ else
   log_event "SKIP_GROUP gemma12b run_gemma12b=$RUN_GEMMA12B"
 fi
 
-if [[ "$RUN_PHI4" == "1" ]]; then
-  run_phi4_group
+if [[ "$RUN_QWEN36" == "1" ]]; then
+  run_qwen36_group
 else
-  log_event "SKIP_GROUP phi4 run_phi4=$RUN_PHI4"
+  log_event "SKIP_GROUP qwen36 run_qwen36=$RUN_QWEN36"
+fi
+
+if [[ "$RUN_DEEPSIGNAL4B" == "1" ]]; then
+  run_deepsignal4b_group
+else
+  log_event "SKIP_GROUP deepsignal4b run_deepsignal4b=$RUN_DEEPSIGNAL4B"
 fi
 
 python3 "$PROJECT_ROOT/scripts/summarize_chengdu_peak_matrix.py" "$RUN_ROOT" | tee "$RUN_ROOT/matrix_summary.md"

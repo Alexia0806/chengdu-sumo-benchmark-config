@@ -131,6 +131,14 @@ python3 scripts/deepsignal_cycleplan_benchmark_chengdu_metrics.py \
 
 Remote matrix scripts live under `scripts/run_*.sh`. They source `scripts/env_defaults.sh`, which derives path defaults from `AUTODL_ROOT`, `PROJECT_ROOT`, `MODELS_ROOT`, `RUNS_ROOT`, `SUMO_HOME`, and backend-specific variables. Override those variables before invoking a launcher when running outside the original AutoDL layout.
 
+The current formal three-intersection matrix runner is:
+
+```bash
+bash scripts/run_chengdu_3tl_att_awt_relaxed_x1p8_matrix.sh
+```
+
+It defaults to no SUMO-default baseline (`RUN_DEFAULT=0`) and runs `GPT-OSS-20B`, `Qwen3-4B`, `Gemma3-12B-IT`, `Qwen3.6-27B`, and `DeepSignal-CyclePlan-4B-V2` (`model-fp16-20260519.gguf`) at `temperature=0.2` for demand scales `1.2` and `1.5`.
+
 ## Configuration
 
 Important runner options:
@@ -159,6 +167,7 @@ Useful environment variables:
 - `WARMUP_SECONDS` / `METRIC_SECONDS`: remote matrix runner window; the default `300 / 1200` reports the `300-1500s` metric interval.
 - `PYTHON_BIN`: Python executable used by remote launchers.
 - `LLAMA_SERVER`: llama.cpp server executable for GGUF workflows.
+- `GPTOSS20B_PATH`, `QWEN4B_PATH`, `GEMMA12B_PATH`, `QWEN36_PATH`, `DEEPSIGNAL4B_GGUF_PATH`: model paths used by the formal three-intersection runner.
 - `HF_ATTN_IMPLEMENTATION` / `HF_EXPERTS_IMPLEMENTATION`: optional Hugging Face loading knobs used by the metrics runner.
 - `OPENAI_API_KEY` and `--openai-base-url`: OpenAI-compatible backend credentials and endpoint.
 

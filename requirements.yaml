@@ -55,6 +55,11 @@ path_defaults:
   BENCH_ROOT: "Tracked Chengdu benchmark scenario root."
   DEEPSIGNAL_BENCH_ROOT: "Optional upstream DeepSignal benchmark clone root."
   SUMO_HOME: "SUMO installation root; auto-detected from PATH when possible."
+  GPTOSS20B_PATH: "Optional override for the GPT-OSS-20B Hugging Face model directory."
+  QWEN4B_PATH: "Optional override for the Qwen3-4B Hugging Face model directory."
+  GEMMA12B_PATH: "Optional override for the Gemma3-12B-IT Hugging Face model directory."
+  QWEN36_PATH: "Optional override for the Qwen3.6-27B Hugging Face model directory."
+  DEEPSIGNAL4B_GGUF_PATH: "Optional override for the DeepSignal-CyclePlan-4B-V2 GGUF file."
 
 notes:
   - "Full model closed-loop benchmarks require SUMO, model files, and exactly one configured backend."
